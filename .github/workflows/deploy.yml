@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mirsal/mirsal
+        working-directory: mirsal
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
