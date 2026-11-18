@@ -611,7 +611,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               <button
                 type="submit"
                 aria-label="إرسال الرسالة"
-                className="min-h-[44px] min-w-[44px] px-4 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white flex items-center justify-center gap-1.5 text-sm font-semibold transition-colors shrink-0"
+                className="btn-glass min-h-[44px] min-w-[44px] px-4 rounded-xl flex items-center justify-center gap-1.5 text-sm font-semibold shrink-0"
               >
                 <Send className="w-4 h-4" />
                 <span className="hidden sm:inline">إرسال</span>

@@ -20,6 +20,7 @@ import {
 import { broadcast, getOnlineUserIds, revokeDevice } from './realtime';
 import { ensureSchema, newUid } from './schema';
 import { isAdminEmail } from './admin';
+import { readWallpapers, sanitizeWallpapers, writeWallpapers } from './appearance';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
 
 interface Ctx {
@@ -545,6 +546,17 @@ const myTickets: Handler = async ({ env, auth }) => {
 
 /* ------------------------------ Developer ------------------------------ */
 
+const getAppearance: Handler = async ({ env }) => json({ wallpapers: await readWallpapers(env) });
+
+const putAppearance: Handler = async ({ req, env, auth }) => {
+  await requireAdmin(env, auth);
+  const body = await readJson(req);
+  const list = sanitizeWallpapers(body.wallpapers);
+  await writeWallpapers(env, list);
+  return json({ wallpapers: list });
+};
+
+
 async function requireAdmin(env: Env, auth: AuthCtx | null): Promise<AuthCtx> {
   const a = requireAuth(auth);
   const row = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(a.userId).first<{ email: string | null }>();
@@ -728,6 +740,8 @@ const routes: Route[] = [
   { method: 'POST', pattern: /^\/api\/admin\/users\/([\w-]+)\/logout$/, handler: adminLogoutUser },
   { method: 'GET', pattern: /^\/api\/admin\/tickets$/, handler: adminListTickets },
   { method: 'POST', pattern: /^\/api\/admin\/tickets\/([\w-]+)\/reply$/, handler: adminReplyTicket },
+  { method: 'GET', pattern: /^\/api\/appearance$/, handler: getAppearance, public: true },
+  { method: 'PUT', pattern: /^\/api\/admin\/appearance$/, handler: putAppearance },
 ];
 
 export async function handleApi(req: Request, env: Env): Promise<Response> {

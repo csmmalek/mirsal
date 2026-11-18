@@ -89,6 +89,11 @@ export const SCHEMA: string[] = [
     replied_at TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
 ];
 
 /** Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", so errors are ignored. */

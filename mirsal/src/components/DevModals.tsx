@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { User } from '../types/chat';
 import { THEMES } from '../themes';
+import { FALLBACK_WALLPAPERS, applyWallpaper, currentWallpaper, getWallpapers } from '../appearance';
 import { ModalShell } from './SideModals';
 
 type Api = (path: string, init?: RequestInit) => Promise<Response>;
@@ -131,6 +132,7 @@ export const ThemeModal: React.FC<{
   onClose: () => void;
 }> = ({ current, onApply, onClose }) => {
   const [picked, setPicked] = useState(current);
+  const [activeWp, setActiveWp] = useState(currentWallpaper());
   return (
     <ModalShell title="اختر الثيم" onClose={onClose}>
       <div className="grid grid-cols-3 gap-3">
@@ -163,7 +165,28 @@ export const ThemeModal: React.FC<{
       <p className="mt-4 text-[11px] text-slate-500 dark:text-slate-400">
         خلفيات المحادثة تظهر في الوضع الداكن. غيّر الوضع الفاتح/الداكن من زر القمر.
       </p>
-      <button type="button" onClick={onClose} className={`${primaryBtn} w-full mt-4`}>
+      <div className="mt-5">
+        <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">خلفية المحادثة</div>
+        <div className="grid grid-cols-3 gap-2">
+          {[{ id: '', name: 'الافتراضية', css: '' }, ...getWallpapers()].map((w) => (
+            <button
+              key={w.id || 'default'}
+              type="button"
+              onClick={() => {
+                applyWallpaper(w.id);
+                setActiveWp(w.id);
+              }}
+              className={`h-16 rounded-xl text-[11px] font-semibold text-white flex items-end justify-center pb-1.5 border-2 ${
+                activeWp === w.id ? 'border-[color:var(--accent)]' : 'border-white/10'
+              }`}
+              style={{ backgroundImage: w.css || 'linear-gradient(180deg,#1e293b,#0f172a)' }}
+            >
+              {w.name}
+            </button>
+          ))}
+        </div>
+      </div>
+      <button type="button" onClick={onClose} className="btn-glass w-full min-h-[44px] rounded-xl text-sm font-semibold mt-4">
         تطبيق الثيم
       </button>
     </ModalShell>
@@ -437,12 +460,45 @@ const TicketRow: React.FC<{ t: AdminTicket; api: Api; onChanged: () => void }> =
 };
 
 export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, onClose }) => {
-  const [tab, setTab] = useState<'users' | 'tickets' | 'stats'>('users');
+  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look'>('users');
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [tickets, setTickets] = useState<AdminTicket[]>([]);
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [wpText, setWpText] = useState('');
+  const [wpMsg, setWpMsg] = useState<string | null>(null);
+
+  const loadLook = useCallback(async () => {
+    const res = await api('/api/appearance');
+    if (!res.ok) return;
+    const data = (await res.json()) as { wallpapers: unknown[] };
+    setWpText(JSON.stringify(data.wallpapers.length ? data.wallpapers : FALLBACK_WALLPAPERS, null, 2));
+  }, [api]);
+  useEffect(() => {
+    if (tab === 'look') loadLook();
+  }, [tab, loadLook]);
+
+  const saveLook = async () => {
+    setWpMsg(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(wpText);
+    } catch {
+      setWpMsg('صيغة JSON غير صحيحة، تحقق من الأقواس والفواصل');
+      return;
+    }
+    const res = await api('/api/admin/appearance', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallpapers: parsed }),
+    });
+    if (!res.ok) {
+      setWpMsg(await readError(res, 'تعذر حفظ الخلفيات'));
+      return;
+    }
+    setWpMsg('تم الحفظ. ستظهر التغييرات عند فتح التطبيق.');
+  };
 
   const loadUsers = useCallback(
     async (query: string) => {
@@ -492,6 +548,7 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
             ['users', 'الحسابات'],
             ['tickets', `الدعم${stats?.openTickets ? ` (${stats.openTickets})` : ''}`],
             ['stats', 'الإحصائيات'],
+            ['look', 'المظهر'],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -559,6 +616,27 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
               <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === 'look' && (
+        <div className="space-y-2.5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+            عدّل خلفيات المحادثة هنا. لكل خلفية: معرّف بالإنجليزية (مثل aurora)، واسم، وقيمة CSS من التدرجات فقط.
+            لا تستخدم روابط صور. تظهر التغييرات عند فتح التطبيق.
+          </p>
+          <textarea
+            value={wpText}
+            onChange={(e) => setWpText(e.target.value)}
+            spellCheck={false}
+            dir="ltr"
+            rows={14}
+            className={`${fieldCls} font-mono text-xs leading-relaxed`}
+          />
+          {wpMsg && <div className="text-xs text-slate-700 dark:text-slate-300">{wpMsg}</div>}
+          <button type="button" onClick={saveLook} className="btn-glass w-full min-h-[44px] rounded-xl text-sm font-semibold">
+            حفظ الخلفيات
+          </button>
         </div>
       )}
     </ModalShell>
