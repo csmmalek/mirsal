@@ -18,7 +18,8 @@ import {
   mapUser,
 } from './db';
 import { broadcast, getOnlineUserIds, revokeDevice } from './realtime';
-import { ensureSchema } from './schema';
+import { ensureSchema, newUid } from './schema';
+import { isAdminEmail } from './admin';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
 
 interface Ctx {
@@ -54,62 +55,84 @@ function requireB64(v: unknown, label: string, max: number): string {
 
 /* ------------------------------ Auth ------------------------------ */
 
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
+
 const register: Handler = async ({ req, env }) => {
   const b = await readJson(req);
-  const username = str(b.username, 40).trim().toLowerCase();
-  if (!/^[a-z0-9_]{3,24}$/.test(username)) {
-    throw new HttpError(400, 'اسم المستخدم: من 3 إلى 24 حرفاً إنجليزياً صغيراً أو أرقاماً أو _');
-  }
-  const displayName = str(b.displayName, 40).trim() || username;
+  const email = str(b.email, 120).trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) throw new HttpError(400, 'يرجى إدخال بريد إلكتروني صحيح');
+  const displayName = str(b.displayName, 40).trim() || email.split('@')[0];
   const authSecret = requireB64(b.authSecret, 'كلمة المرور', 128);
   if (authSecret.length < 32) throw new HttpError(400, 'كلمة المرور غير صالحة');
   const publicKey = validatePublicKey(str(b.publicKey, 601));
   const encPriv = requireB64(b.encryptedPrivateKey, 'المفتاح الخاص', 4000);
   const encPrivIv = requireB64(b.privateKeyIv, 'متجه المفتاح', 64);
 
-  const taken = await env.DB.prepare('SELECT 1 AS x FROM users WHERE username = ?').bind(username).first();
-  if (taken) throw new HttpError(409, 'اسم المستخدم مستخدم مسبقاً');
+  // The developer email is reserved: emails are not verified, so claiming it needs the secret setup code.
+  if (isAdminEmail(email)) {
+    const code = str(b.setupCode, 200);
+    if (!env.ADMIN_SETUP_CODE) {
+      throw new HttpError(403, 'حساب المطور غير مفعّل بعد: أضف السر ADMIN_SETUP_CODE في إعدادات Cloudflare أولاً');
+    }
+    if (!timingSafeEqual(code, env.ADMIN_SETUP_CODE)) {
+      throw new HttpError(403, 'رمز إعداد المطور غير صحيح');
+    }
+  }
+
+  const taken = await env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ?').bind(email).first();
+  if (taken) throw new HttpError(409, 'هذا البريد مسجّل مسبقاً، سجّل الدخول بدلاً من ذلك');
 
   const id = newId('user');
   const salt = randomToken(16);
   const now = nowIso();
-  try {
-    await env.DB.prepare(
-      `INSERT INTO users (id, username, display_name, bio, auth_salt, auth_hash, public_key,
-                          enc_private_key, enc_private_iv, last_seen, created_at)
-       VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(id, username, displayName, salt, await hashAuthSecret(salt, authSecret), publicKey, encPriv, encPrivIv, now, now)
-      .run();
-  } catch {
-    throw new HttpError(409, 'اسم المستخدم مستخدم مسبقاً');
+  let created = false;
+  for (let attempt = 0; attempt < 4 && !created; attempt++) {
+    const uid = await newUid(env.DB);
+    try {
+      await env.DB.prepare(
+        `INSERT INTO users (id, username, display_name, bio, auth_salt, auth_hash, public_key,
+                            enc_private_key, enc_private_iv, last_seen, created_at, email, uid)
+         VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(id, `m${uid}`, displayName, salt, await hashAuthSecret(salt, authSecret), publicKey, encPriv, encPrivIv, now, now, email, uid)
+        .run();
+      created = true;
+    } catch {
+      const again = await env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ?').bind(email).first();
+      if (again) throw new HttpError(409, 'هذا البريد مسجّل مسبقاً، سجّل الدخول بدلاً من ذلك');
+    }
   }
+  if (!created) throw new HttpError(500, 'تعذر إنشاء الحساب، حاول مرة أخرى');
 
   const { token, deviceId } = await createDevice(env, id, str(b.deviceName, 80), str(b.deviceType, 20));
   const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<Record<string, unknown>>();
-  return json({ user: mapUser(row!, new Set([id])), token, deviceId });
+  return json({ user: mapUser(row!, new Set([id]), true), token, deviceId });
 };
 
 const login: Handler = async ({ req, env }) => {
   const b = await readJson(req);
-  const username = str(b.username, 40).trim().toLowerCase();
+  // New accounts sign in with their email; accounts created before email login keep their old username.
+  const identifier = str(b.identifier ?? b.username, 120).trim().toLowerCase();
   const authSecret = str(b.authSecret, 129);
-  if (!username || !authSecret || authSecret.length > 128) throw new HttpError(400, 'يرجى إدخال اسم المستخدم وكلمة المرور');
+  if (!identifier || !authSecret || authSecret.length > 128) throw new HttpError(400, 'يرجى إدخال البريد الإلكتروني وكلمة المرور');
 
-  await assertNotThrottled(env, username);
-  const row = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<Record<string, unknown>>();
+  await assertNotThrottled(env, identifier);
+  const row = await env.DB.prepare('SELECT * FROM users WHERE email = ? OR username = ?')
+    .bind(identifier, identifier)
+    .first<Record<string, unknown>>();
   const expected = row ? String(row.auth_hash) : '0'.repeat(64);
   const actual = await hashAuthSecret(row ? String(row.auth_salt) : 'x', authSecret);
   if (!row || !timingSafeEqual(expected, actual)) {
-    await recordLoginFailure(env, username);
-    throw new HttpError(401, 'اسم المستخدم أو كلمة المرور غير صحيحة');
+    await recordLoginFailure(env, identifier);
+    throw new HttpError(401, 'البريد الإلكتروني أو كلمة المرور غير صحيحة');
   }
-  await clearLoginFailures(env, username);
+  if (Number(row.banned) === 1) throw new HttpError(403, 'تم إيقاف هذا الحساب. تواصل مع المطور');
+  await clearLoginFailures(env, identifier);
 
   const { token, deviceId } = await createDevice(env, String(row.id), str(b.deviceName, 80), str(b.deviceType, 20));
   const online = await getOnlineUserIds(env);
   return json({
-    user: mapUser(row, online),
+    user: mapUser(row, online, true),
     token,
     deviceId,
     encryptedPrivateKey: String(row.enc_private_key),
@@ -129,22 +152,22 @@ const me: Handler = async ({ env, auth }) => {
   const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(a.userId).first<Record<string, unknown>>();
   if (!row) throw new HttpError(401, 'الحساب غير موجود');
   await env.DB.prepare('UPDATE devices SET last_active = ? WHERE id = ?').bind(nowIso(), a.deviceId).run();
-  return json({ user: mapUser(row, await getOnlineUserIds(env)), deviceId: a.deviceId });
+  return json({ user: mapUser(row, await getOnlineUserIds(env), true), deviceId: a.deviceId });
 };
 
 /* ------------------------------ Users ------------------------------ */
 
 const searchUsers: Handler = async ({ env, auth, url }) => {
   const a = requireAuth(auth);
-  const q = (url.searchParams.get('q') || '').trim().toLowerCase().slice(0, 40);
+  const q = (url.searchParams.get('q') || '').trim().toLowerCase().replace(/^[#@]/, '').slice(0, 40);
   if (q.length < 2) return json({ users: [] });
   const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
   const { results } = await env.DB.prepare(
     `SELECT * FROM users
-     WHERE id != ? AND (username LIKE ? ESCAPE '\\' OR LOWER(display_name) LIKE ? ESCAPE '\\')
-     ORDER BY username LIMIT 20`
+     WHERE id != ? AND banned = 0 AND (uid = ? OR LOWER(display_name) LIKE ? ESCAPE '\\')
+     ORDER BY display_name LIMIT 20`
   )
-    .bind(a.userId, like, like)
+    .bind(a.userId, q, like)
     .all<Record<string, unknown>>();
   const online = await getOnlineUserIds(env);
   return json({ users: results.map((r) => mapUser(r, online)) });
@@ -483,6 +506,190 @@ const iceServers: Handler = async ({ env, auth }) => {
   }
 };
 
+/* ------------------------------ Support ------------------------------ */
+
+const createTicket: Handler = async ({ req, env, auth }) => {
+  const a = requireAuth(auth);
+  const b = await readJson(req);
+  const message = str(b.message, 1000).trim();
+  if (message.length < 3) throw new HttpError(400, 'اكتب رسالتك للدعم');
+  const open = await env.DB.prepare("SELECT COUNT(*) AS n FROM support_tickets WHERE user_id = ? AND status = 'open'")
+    .bind(a.userId)
+    .first<{ n: number }>();
+  if ((open?.n ?? 0) >= 5) throw new HttpError(429, 'لديك عدة رسائل مفتوحة. انتظر رد المطور أولاً');
+  const id = newId('tkt');
+  await env.DB.prepare('INSERT INTO support_tickets (id, user_id, message, status, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(id, a.userId, message, 'open', nowIso())
+    .run();
+  return json({ ok: true, id });
+};
+
+const myTickets: Handler = async ({ env, auth }) => {
+  const a = requireAuth(auth);
+  const { results } = await env.DB.prepare(
+    'SELECT id, message, reply, status, created_at, replied_at FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT 30'
+  )
+    .bind(a.userId)
+    .all<Record<string, unknown>>();
+  return json({
+    tickets: results.map((r) => ({
+      id: String(r.id),
+      message: String(r.message),
+      reply: r.reply ? String(r.reply) : null,
+      status: String(r.status),
+      createdAt: String(r.created_at),
+      repliedAt: r.replied_at ? String(r.replied_at) : null,
+    })),
+  });
+};
+
+/* ------------------------------ Developer ------------------------------ */
+
+async function requireAdmin(env: Env, auth: AuthCtx | null): Promise<AuthCtx> {
+  const a = requireAuth(auth);
+  const row = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(a.userId).first<{ email: string | null }>();
+  if (!row || !isAdminEmail(row.email)) throw new HttpError(403, 'هذه الصفحة للمطور فقط');
+  return a;
+}
+
+async function dropUserSessions(env: Env, userId: string): Promise<void> {
+  const { results } = await env.DB.prepare('SELECT id FROM devices WHERE user_id = ?').bind(userId).all<{ id: string }>();
+  await env.DB.prepare('DELETE FROM devices WHERE user_id = ?').bind(userId).run();
+  for (const d of results) await revokeDevice(env, userId, d.id);
+}
+
+const adminStats: Handler = async ({ env, auth }) => {
+  await requireAdmin(env, auth);
+  const count = async (sql: string) => Number((await env.DB.prepare(sql).first<{ n: number }>())?.n ?? 0);
+  const online = await getOnlineUserIds(env);
+  return json({
+    users: await count('SELECT COUNT(*) AS n FROM users'),
+    banned: await count('SELECT COUNT(*) AS n FROM users WHERE banned = 1'),
+    conversations: await count('SELECT COUNT(*) AS n FROM conversations'),
+    messages: await count('SELECT COUNT(*) AS n FROM messages'),
+    openTickets: await count("SELECT COUNT(*) AS n FROM support_tickets WHERE status = 'open'"),
+    online: online.size,
+  });
+};
+
+const adminListUsers: Handler = async ({ env, auth, url }) => {
+  await requireAdmin(env, auth);
+  const q = (url.searchParams.get('q') || '').trim().toLowerCase().replace(/^[#@]/, '').slice(0, 60);
+  const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+  const sql = q
+    ? `SELECT u.*, (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id) AS devices
+       FROM users u WHERE u.uid = ? OR LOWER(u.email) LIKE ? ESCAPE '\\' OR LOWER(u.display_name) LIKE ? ESCAPE '\\'
+       ORDER BY u.created_at DESC LIMIT 60`
+    : `SELECT u.*, (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id) AS devices
+       FROM users u WHERE ? = ? AND ? = ? ORDER BY u.created_at DESC LIMIT 60`;
+  const stmt = env.DB.prepare(sql);
+  const { results } = await (q ? stmt.bind(q, like, like) : stmt.bind(1, 1, 1, 1)).all<Record<string, unknown>>();
+  const online = await getOnlineUserIds(env);
+  return json({
+    users: results.map((r) => ({
+      id: String(r.id),
+      uid: String(r.uid ?? ''),
+      email: r.email ? String(r.email) : '',
+      legacyUsername: r.email ? '' : String(r.username),
+      displayName: String(r.display_name),
+      bio: String(r.bio ?? ''),
+      banned: Number(r.banned) === 1,
+      isAdmin: isAdminEmail(r.email),
+      online: online.has(String(r.id)),
+      devices: Number(r.devices ?? 0),
+      createdAt: String(r.created_at),
+      lastSeen: String(r.last_seen),
+    })),
+  });
+};
+
+const adminPatchUser: Handler = async ({ req, env, auth, params }) => {
+  await requireAdmin(env, auth);
+  const target = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(params[0]).first<Record<string, unknown>>();
+  if (!target) throw new HttpError(404, 'الحساب غير موجود');
+  const b = await readJson(req);
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+
+  if (typeof b.displayName === 'string') {
+    const name = str(b.displayName, 40).trim();
+    if (!name) throw new HttpError(400, 'الاسم لا يمكن أن يكون فارغاً');
+    sets.push('display_name = ?');
+    vals.push(name);
+  }
+  if (typeof b.bio === 'string') {
+    sets.push('bio = ?');
+    vals.push(str(b.bio, 200));
+  }
+  if (typeof b.uid === 'string' && b.uid !== String(target.uid)) {
+    if (!/^\d{5}$/.test(b.uid)) throw new HttpError(400, 'الـ ID يجب أن يكون 5 أرقام بالضبط');
+    const used = await env.DB.prepare('SELECT 1 AS x FROM users WHERE uid = ? AND id != ?').bind(b.uid, params[0]).first();
+    if (used) throw new HttpError(409, 'هذا الـ ID مستخدم لحساب آخر');
+    sets.push('uid = ?');
+    vals.push(b.uid);
+  }
+  if (typeof b.banned === 'boolean') {
+    if (b.banned && isAdminEmail(target.email)) throw new HttpError(400, 'لا يمكن إيقاف حساب المطور');
+    sets.push('banned = ?');
+    vals.push(b.banned ? 1 : 0);
+  }
+  if (sets.length === 0) throw new HttpError(400, 'لا يوجد تعديل');
+  await env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, params[0]).run();
+  if (b.banned === true) await dropUserSessions(env, params[0]);
+  return json({ ok: true });
+};
+
+const adminLogoutUser: Handler = async ({ env, auth, params }) => {
+  await requireAdmin(env, auth);
+  await dropUserSessions(env, params[0]);
+  return json({ ok: true });
+};
+
+const adminDeleteUser: Handler = async ({ env, auth, params }) => {
+  await requireAdmin(env, auth);
+  const target = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(params[0]).first<{ email: string | null }>();
+  if (!target) throw new HttpError(404, 'الحساب غير موجود');
+  if (isAdminEmail(target.email)) throw new HttpError(400, 'لا يمكن حذف حساب المطور');
+  await dropUserSessions(env, params[0]);
+  await env.DB.prepare('DELETE FROM support_tickets WHERE user_id = ?').bind(params[0]).run();
+  await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(params[0]).run();
+  return json({ ok: true });
+};
+
+const adminListTickets: Handler = async ({ env, auth }) => {
+  await requireAdmin(env, auth);
+  const { results } = await env.DB.prepare(
+    `SELECT t.*, u.display_name AS display_name, u.uid AS uid, u.email AS email
+     FROM support_tickets t LEFT JOIN users u ON u.id = t.user_id
+     ORDER BY (t.status = 'open') DESC, t.created_at DESC LIMIT 60`
+  ).all<Record<string, unknown>>();
+  return json({
+    tickets: results.map((r) => ({
+      id: String(r.id),
+      userId: String(r.user_id),
+      displayName: String(r.display_name ?? 'حساب محذوف'),
+      uid: String(r.uid ?? ''),
+      email: String(r.email ?? ''),
+      message: String(r.message),
+      reply: r.reply ? String(r.reply) : null,
+      status: String(r.status),
+      createdAt: String(r.created_at),
+    })),
+  });
+};
+
+const adminReplyTicket: Handler = async ({ req, env, auth, params }) => {
+  await requireAdmin(env, auth);
+  const b = await readJson(req);
+  const reply = str(b.reply, 1000).trim();
+  if (!reply) throw new HttpError(400, 'اكتب الرد أولاً');
+  const res = await env.DB.prepare("UPDATE support_tickets SET reply = ?, status = 'closed', replied_at = ? WHERE id = ?")
+    .bind(reply, nowIso(), params[0])
+    .run();
+  if (!res.meta.changes) throw new HttpError(404, 'الرسالة غير موجودة');
+  return json({ ok: true });
+};
+
 /* ------------------------------- Router ------------------------------- */
 
 interface Route {
@@ -512,6 +719,15 @@ const routes: Route[] = [
   { method: 'POST', pattern: /^\/api\/notifications\/read$/, handler: readAllNotifications },
   { method: 'POST', pattern: /^\/api\/notifications\/test$/, handler: testNotification },
   { method: 'GET', pattern: /^\/api\/ice$/, handler: iceServers },
+  { method: 'POST', pattern: /^\/api\/support$/, handler: createTicket },
+  { method: 'GET', pattern: /^\/api\/support$/, handler: myTickets },
+  { method: 'GET', pattern: /^\/api\/admin\/stats$/, handler: adminStats },
+  { method: 'GET', pattern: /^\/api\/admin\/users$/, handler: adminListUsers },
+  { method: 'PATCH', pattern: /^\/api\/admin\/users\/([\w-]+)$/, handler: adminPatchUser },
+  { method: 'DELETE', pattern: /^\/api\/admin\/users\/([\w-]+)$/, handler: adminDeleteUser },
+  { method: 'POST', pattern: /^\/api\/admin\/users\/([\w-]+)\/logout$/, handler: adminLogoutUser },
+  { method: 'GET', pattern: /^\/api\/admin\/tickets$/, handler: adminListTickets },
+  { method: 'POST', pattern: /^\/api\/admin\/tickets\/([\w-]+)\/reply$/, handler: adminReplyTicket },
 ];
 
 export async function handleApi(req: Request, env: Env): Promise<Response> {

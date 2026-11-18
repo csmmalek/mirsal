@@ -27,7 +27,7 @@ interface ModalShellProps {
   wide?: boolean;
 }
 
-const ModalShell: React.FC<ModalShellProps> = ({ title, onClose, children, wide }) => (
+export const ModalShell: React.FC<ModalShellProps> = ({ title, onClose, children, wide }) => (
   <div
     role="dialog"
     aria-modal="true"
@@ -39,7 +39,7 @@ const ModalShell: React.FC<ModalShellProps> = ({ title, onClose, children, wide 
       onClick={(e) => e.stopPropagation()}
       className={`w-full ${
         wide ? 'max-w-3xl' : 'max-w-lg'
-      } max-h-[88vh] bg-white dark:bg-[#111820] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl flex flex-col overflow-hidden`}
+      } max-h-[88vh] bg-white dark:bg-[var(--d-surface)] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl flex flex-col overflow-hidden`}
     >
       <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
         <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 font-display">
@@ -128,7 +128,7 @@ export const NewChatModal: React.FC<{
               value={groupTitle}
               onChange={(e) => setGroupTitle(e.target.value)}
               placeholder="مثال: فريق المشروع السحابي"
-              className="w-full min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B1117] text-sm"
+              className="w-full min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[var(--d-bg)] text-sm"
             />
           </div>
         )}
@@ -140,8 +140,8 @@ export const NewChatModal: React.FC<{
             dir="auto"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="ابحث باسم المستخدم أو الاسم (حرفان على الأقل)"
-            className="w-full min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B1117] text-sm"
+            placeholder="ابحث بالـ ID (5 أرقام) أو بالاسم"
+            className="w-full min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[var(--d-bg)] text-sm"
           />
           <p className="text-xs text-slate-500 dark:text-slate-400">
             اختر شخصاً للمراسلة المباشرة، أو أكثر لإنشاء مجموعة:
@@ -172,14 +172,14 @@ export const NewChatModal: React.FC<{
                         {user.displayName}
                       </div>
                       <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                        @{user.username}
+                        #{user.uid}
                       </div>
                     </div>
                   </div>
                   <div
                     className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
                       checked
-                        ? 'bg-[#0D7A5F] border-[#0D7A5F] text-white'
+                        ? 'bg-[var(--accent)] border-[color:var(--accent)] text-white'
                         : 'border-slate-300 dark:border-slate-600'
                     }`}
                   >
@@ -195,7 +195,7 @@ export const NewChatModal: React.FC<{
           type="button"
           disabled={selectedIds.length === 0 || busy}
           onClick={handleCreate}
-          className="w-full min-h-[44px] rounded-xl bg-[#0D7A5F] hover:bg-[#0B664F] disabled:opacity-50 text-white text-sm font-semibold transition-colors"
+          className="w-full min-h-[44px] rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-white text-sm font-semibold transition-colors"
         >
           {selectedIds.length > 1 ? 'إنشاء المجموعة المشفرة' : 'بدء المحادثة'}
         </button>
@@ -303,7 +303,7 @@ export const NotificationsModal: React.FC<{
 }) => (
   <ModalShell title="مركز تنبيهات الدفع الفوري" onClose={onClose}>
     <div className="space-y-4">
-      <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#161F29] border border-slate-200 dark:border-slate-800 space-y-3">
+      <div className="p-4 rounded-xl bg-slate-50 dark:bg-[var(--d-surface2)] border border-slate-200 dark:border-slate-800 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
             تنبيهات النظام والمتصفح (Web Push)
@@ -322,7 +322,7 @@ export const NotificationsModal: React.FC<{
             <button
               type="button"
               onClick={onRequestBrowserPermission}
-              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#0D7A5F] text-white text-xs font-semibold hover:bg-[#0B664F]"
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[var(--accent)] text-white text-xs font-semibold hover:bg-[var(--accent-hover)]"
             >
               تفعيل إشعارات المتصفح
             </button>
@@ -435,7 +435,7 @@ export const ChatInfoModal: React.FC<{
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#161F29] border border-slate-200 dark:border-slate-800 space-y-2">
+        <div className="p-4 rounded-xl bg-slate-50 dark:bg-[var(--d-surface2)] border border-slate-200 dark:border-slate-800 space-y-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
             <ShieldCheck className="w-4 h-4" />
             <span>رقم الأمان وبصمة التحقق (SHA-256)</span>
@@ -445,7 +445,7 @@ export const ChatInfoModal: React.FC<{
           </p>
           <div
             dir="ltr"
-            className="p-3 rounded-lg bg-white dark:bg-[#0B1117] border border-slate-200 dark:border-slate-800 font-mono text-xs text-center tracking-wider leading-relaxed tabular-nums text-slate-800 dark:text-slate-200"
+            className="p-3 rounded-lg bg-white dark:bg-[var(--d-bg)] border border-slate-200 dark:border-slate-800 font-mono text-xs text-center tracking-wider leading-relaxed tabular-nums text-slate-800 dark:text-slate-200"
           >
             {fingerprint}
           </div>
@@ -470,7 +470,7 @@ export const ChatInfoModal: React.FC<{
                       {m.displayName}
                     </div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                      @{m.username}
+                      #{m.uid}
                     </div>
                   </div>
                 </div>

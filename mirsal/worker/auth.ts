@@ -1,4 +1,5 @@
 import type { AuthCtx, Env } from './types';
+import { ensureSchema } from './schema';
 import { HttpError, newId, nowIso, randomToken, sha256Hex } from './util';
 
 export const DEVICE_TYPES = ['web', 'android', 'desktop'] as const;
@@ -11,10 +12,14 @@ export function hashAuthSecret(salt: string, secret: string): Promise<string> {
 export async function authenticateToken(env: Env, token: string): Promise<AuthCtx | null> {
   if (!token || token.length < 20 || token.length > 128) return null;
   const tokenHash = await sha256Hex(token);
-  const row = await env.DB.prepare('SELECT id, user_id FROM devices WHERE token_hash = ?')
+  await ensureSchema(env.DB);
+  const row = await env.DB.prepare(
+    `SELECT d.id AS id, d.user_id AS user_id, u.banned AS banned
+     FROM devices d JOIN users u ON u.id = d.user_id WHERE d.token_hash = ?`
+  )
     .bind(tokenHash)
-    .first<{ id: string; user_id: string }>();
-  return row ? { userId: row.user_id, deviceId: row.id } : null;
+    .first<{ id: string; user_id: string; banned: number }>();
+  return row && !row.banned ? { userId: row.user_id, deviceId: row.id } : null;
 }
 
 export async function authenticateRequest(env: Env, req: Request): Promise<AuthCtx | null> {

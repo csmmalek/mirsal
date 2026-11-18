@@ -6,6 +6,8 @@ import { ChatWorkspace } from './components/ChatWorkspace';
 import { ConversationList } from './components/ConversationList';
 import { SidebarNav } from './components/SidebarNav';
 import { ChatInfoModal, DevicesModal, NewChatModal, NotificationsModal } from './components/SideModals';
+import { AdminModal, ProfileModal, SupportModal, ThemeModal } from './components/DevModals';
+import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
 import type {
   ActiveCallState,
   Conversation,
@@ -39,7 +41,7 @@ interface AndroidBridge {
 const androidBridge = (): AndroidBridge | undefined =>
   (window as unknown as { MirsalAndroid?: AndroidBridge }).MirsalAndroid;
 
-const LS = { token: 'mirsal_token', priv: 'mirsal_priv', device: 'mirsal_device_id', theme: 'mirsal_theme' };
+const LS = { token: 'mirsal_token', priv: 'mirsal_priv', device: 'mirsal_device_id', theme: 'mirsal_theme', color: 'mirsal_color_theme' };
 const CALL_RING_TIMEOUT_MS = 45_000;
 
 function playNotificationTone() {
@@ -90,11 +92,17 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
 
-  const [activeModal, setActiveModal] = useState<null | 'new_chat' | 'devices' | 'notifications' | 'chat_info'>(null);
+  const [activeModal, setActiveModal] = useState<
+    null | 'new_chat' | 'devices' | 'notifications' | 'chat_info' | 'profile' | 'themes' | 'support' | 'admin'
+  >(null);
   const [chatFingerprint, setChatFingerprint] = useState('');
   const [toastNotification, setToastNotification] = useState<PushNotificationItem | null>(null);
 
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem(LS.theme) === 'dark');
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem(LS.theme) !== 'light');
+  const [colorTheme, setColorTheme] = useState(() => {
+    const saved = localStorage.getItem(LS.color);
+    return THEMES.some((t) => t.id === saved) ? (saved as string) : DEFAULT_THEME;
+  });
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [browserPermission, setBrowserPermission] = useState<NotificationPermission | 'unsupported'>(() =>
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
@@ -135,6 +143,11 @@ export default function App() {
     document.documentElement.classList.toggle('dark', darkMode);
     localStorage.setItem(LS.theme, darkMode ? 'dark' : 'light');
   }, [darkMode]);
+
+  useEffect(() => {
+    applyTheme(colorTheme);
+    localStorage.setItem(LS.color, colorTheme);
+  }, [colorTheme]);
 
   /* ------------------------------- session ------------------------------- */
 
@@ -255,7 +268,7 @@ export default function App() {
       setAuthLoading(true);
       setAuthError(null);
       try {
-        const { authSecret, wrapKey } = await deriveFromPassword(p.username, p.password);
+        const { authSecret, wrapKey } = await deriveFromPassword(p.email, p.password);
         const info = deviceInfo();
         if (p.mode === 'register') {
           const kp = await generateIdentityKeyPair();
@@ -263,7 +276,8 @@ export default function App() {
           const res = await api('/api/auth/register', {
             method: 'POST',
             body: JSON.stringify({
-              username: p.username,
+              email: p.email,
+              setupCode: p.setupCode,
               displayName: p.displayName,
               authSecret,
               publicKey: kp.publicKeyJwk,
@@ -278,7 +292,7 @@ export default function App() {
         } else {
           const res = await api('/api/auth/login', {
             method: 'POST',
-            body: JSON.stringify({ username: p.username, authSecret, ...info }),
+            body: JSON.stringify({ identifier: p.email, authSecret, ...info }),
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || 'فشل تسجيل الدخول');
@@ -884,7 +898,7 @@ export default function App() {
   );
 
   if (booting) {
-    return <div className="h-screen w-full flex items-center justify-center bg-[#F4F6F8] dark:bg-[#0B1117] text-sm text-slate-500">جاري التحميل...</div>;
+    return <div className="h-screen w-full flex items-center justify-center bg-[#F4F6F8] dark:bg-[var(--d-bg)] text-sm text-slate-500">جاري التحميل...</div>;
   }
 
   if (!currentUser) {
@@ -892,7 +906,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden flex bg-[#F4F6F8] dark:bg-[#0B1117] text-slate-900 dark:text-slate-100">
+    <div className="h-screen w-full overflow-hidden flex bg-[#F4F6F8] dark:bg-[var(--d-bg)] text-slate-900 dark:text-slate-100">
       {/* Navigation Rail (Right side in RTL) */}
       <SidebarNav
         currentUser={currentUser}
@@ -902,6 +916,10 @@ export default function App() {
         onToggleTheme={() => setDarkMode((d) => !d)}
         onOpenNotifications={() => setActiveModal('notifications')}
         onOpenDevices={() => setActiveModal('devices')}
+        onOpenProfile={() => setActiveModal('profile')}
+        onOpenThemes={() => setActiveModal('themes')}
+        onOpenSupport={() => setActiveModal('support')}
+        onOpenAdmin={() => setActiveModal('admin')}
         onLogout={() => {
           api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined).finally(clearSession);
         }}
@@ -953,7 +971,7 @@ export default function App() {
       {toastNotification && (
         <div
           role="status"
-          className="fixed top-4 left-4 z-40 max-w-sm bg-white dark:bg-[#161F29] border border-slate-200 dark:border-slate-700 rounded-2xl shadow-lg p-3.5 flex items-start gap-3"
+          className="fixed top-4 left-4 z-40 max-w-sm bg-white dark:bg-[var(--d-surface2)] border border-slate-200 dark:border-slate-700 rounded-2xl shadow-lg p-3.5 flex items-start gap-3"
         >
           <div className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
             <Bell className="w-4 h-4" />
@@ -1003,6 +1021,26 @@ export default function App() {
       )}
 
       {/* Workspace Modals */}
+      {activeModal === 'profile' && (
+        <ProfileModal
+          user={currentUser}
+          onClose={() => setActiveModal(null)}
+          onOpenDevices={() => setActiveModal('devices')}
+          onOpenSupport={() => setActiveModal('support')}
+          onOpenThemes={() => setActiveModal('themes')}
+          onOpenAdmin={() => setActiveModal('admin')}
+          onLogout={() => {
+            setActiveModal(null);
+            api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined).finally(clearSession);
+          }}
+        />
+      )}
+      {activeModal === 'themes' && (
+        <ThemeModal current={colorTheme} onApply={setColorTheme} onClose={() => setActiveModal(null)} />
+      )}
+      {activeModal === 'support' && <SupportModal api={api} onClose={() => setActiveModal(null)} />}
+      {activeModal === 'admin' && currentUser.isAdmin && <AdminModal api={api} onClose={() => setActiveModal(null)} />}
+
       {activeModal === 'new_chat' && (
         <NewChatModal onSearch={searchUsers} onCreate={createChat} onClose={() => setActiveModal(null)} />
       )}

@@ -86,7 +86,7 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
       role="dialog"
       aria-modal="true"
       aria-label="نافذة المكالمة المشفرة"
-      className="fixed inset-0 z-50 bg-[#0B1117]/95 backdrop-blur-md text-white flex flex-col justify-between p-6"
+      className="fixed inset-0 z-50 bg-[var(--d-bg)]/95 backdrop-blur-md text-white flex flex-col justify-between p-6"
     >
       {/* Remote audio plays through a dedicated element (the video element is muted) */}
       <audio ref={remoteAudioRef} autoPlay muted={!call.speakerOn} />

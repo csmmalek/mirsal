@@ -114,7 +114,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   return (
     <aside
       aria-label="قائمة المحادثات"
-      className="flex flex-col h-full bg-white dark:bg-[#111820] border-l border-slate-200 dark:border-slate-800"
+      className="flex flex-col h-full bg-white dark:bg-[var(--d-surface)] border-l border-slate-200 dark:border-slate-800"
     >
       {/* Header */}
       <div className="px-4 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
@@ -140,7 +140,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             onClick={onOpenNewChat}
             aria-label="محادثة جديدة"
             title="محادثة جديدة"
-            className="min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[#0D7A5F] hover:bg-[#0B664F] text-white flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
+            className="min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
           >
             <MessageSquarePlus className="w-4 h-4" />
             <span className="hidden sm:inline">جديدة</span>
@@ -158,11 +158,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="ابحث بالاسم أو نص الرسالة..."
             aria-label="البحث في المحادثات"
-            className="w-full min-h-[42px] pr-9 pl-3 py-2 rounded-xl bg-slate-100 dark:bg-[#0B1117] border border-transparent focus:border-emerald-600 focus:bg-white dark:focus:bg-[#161F29] text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none transition-colors"
+            className="w-full min-h-[42px] pr-9 pl-3 py-2 rounded-xl bg-slate-100 dark:bg-[var(--d-bg)] border border-transparent focus:border-emerald-600 focus:bg-white dark:focus:bg-[var(--d-surface2)] text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none transition-colors"
           />
         </div>
 
-        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-[#0B1117] rounded-xl" role="tablist" aria-label="تصفية المحادثات">
+        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-[var(--d-bg)] rounded-xl" role="tablist" aria-label="تصفية المحادثات">
           {(
             [
               { id: 'all', label: 'الكل' },
@@ -178,7 +178,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
               onClick={() => onFilterChange(tab.id)}
               className={`flex-1 min-h-[36px] px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                 filter === tab.id
-                  ? 'bg-white dark:bg-[#161F29] text-slate-900 dark:text-white shadow-xs'
+                  ? 'bg-white dark:bg-[var(--d-surface2)] text-slate-900 dark:text-white shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
@@ -242,7 +242,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                   {conv.type === 'direct' && isOnline && (
                     <span
                       title="متصل الآن"
-                      className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-[#111820] absolute bottom-0 left-0"
+                      className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-[var(--d-surface)] absolute bottom-0 left-0"
                     />
                   )}
                 </div>
@@ -262,7 +262,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                       {renderPreview(conv)}
                     </div>
                     {conv.unreadCount > 0 && (
-                      <span className="min-w-[20px] h-5 px-1.5 rounded-md bg-[#0D7A5F] text-white text-[11px] font-semibold tabular-nums flex items-center justify-center shrink-0">
+                      <span className="min-w-[20px] h-5 px-1.5 rounded-md bg-[var(--accent)] text-white text-[11px] font-semibold tabular-nums flex items-center justify-center shrink-0">
                         {conv.unreadCount}
                       </span>
                     )}

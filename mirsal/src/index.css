@@ -41,6 +41,152 @@
   background: rgba(148, 163, 184, 0.55);
 }
 
+
+/* ---- Color themes (generated). Tailwind's "emerald" scale is remapped to each theme's accent. ---- */
+html[data-theme="neon"] {
+  --color-emerald-50: #f3ecfd;
+  --color-emerald-100: #e6dafc;
+  --color-emerald-200: #cdb4f8;
+  --color-emerald-300: #ae86f4;
+  --color-emerald-400: #8f57ef;
+  --color-emerald-500: #732deb;
+  --color-emerald-600: #5d14db;
+  --color-emerald-700: #4d11b6;
+  --color-emerald-800: #3c0d8c;
+  --color-emerald-900: #2c0a67;
+  --color-emerald-950: #1c0641;
+  --accent: #5d14db;
+  --accent-hover: #4d11b6;
+  --d-bg: #0F0B1F;
+  --d-surface: #161030;
+  --d-surface2: #1E1742;
+}
+html[data-theme="sky"] {
+  --color-emerald-50: #ecf3fd;
+  --color-emerald-100: #d9e8fc;
+  --color-emerald-200: #b4d0f9;
+  --color-emerald-300: #84b3f5;
+  --color-emerald-400: #5596f1;
+  --color-emerald-500: #2b7cee;
+  --color-emerald-600: #1267de;
+  --color-emerald-700: #0f55b8;
+  --color-emerald-800: #0b428e;
+  --color-emerald-900: #083068;
+  --color-emerald-950: #051f42;
+  --accent: #1267de;
+  --accent-hover: #0f55b8;
+  --d-bg: #08101F;
+  --d-surface: #0E1A33;
+  --d-surface2: #14244A;
+}
+html[data-theme="nature"] {
+  --color-emerald-50: #effbf5;
+  --color-emerald-100: #def7eb;
+  --color-emerald-200: #beefd8;
+  --color-emerald-300: #95e4bf;
+  --color-emerald-400: #6cdaa7;
+  --color-emerald-500: #47d191;
+  --color-emerald-600: #30c07d;
+  --color-emerald-700: #289f67;
+  --color-emerald-800: #1f7a50;
+  --color-emerald-900: #165a3a;
+  --color-emerald-950: #0e3925;
+  --accent: #30c07d;
+  --accent-hover: #289f67;
+  --d-bg: #07140F;
+  --d-surface: #0D1F17;
+  --d-surface2: #142D22;
+}
+html[data-theme="night"] {
+  --color-emerald-50: #eff1fa;
+  --color-emerald-100: #dfe2f6;
+  --color-emerald-200: #c0c6ed;
+  --color-emerald-300: #98a2e1;
+  --color-emerald-400: #717ed6;
+  --color-emerald-500: #4d5ecb;
+  --color-emerald-600: #3648ba;
+  --color-emerald-700: #2d3b9a;
+  --color-emerald-800: #222e77;
+  --color-emerald-900: #192157;
+  --color-emerald-950: #101537;
+  --accent: #3648ba;
+  --accent-hover: #2d3b9a;
+  --d-bg: #070912;
+  --d-surface: #0D1020;
+  --d-surface2: #141932;
+}
+html[data-theme="pink"] {
+  --color-emerald-50: #fdedf5;
+  --color-emerald-100: #fbdbeb;
+  --color-emerald-200: #f6b6d6;
+  --color-emerald-300: #f089bd;
+  --color-emerald-400: #eb5ca3;
+  --color-emerald-500: #e6338c;
+  --color-emerald-600: #d51a78;
+  --color-emerald-700: #b11663;
+  --color-emerald-800: #88114d;
+  --color-emerald-900: #640c38;
+  --color-emerald-950: #400824;
+  --accent: #d51a78;
+  --accent-hover: #b11663;
+  --d-bg: #1A0B15;
+  --d-surface: #251020;
+  --d-surface2: #33172C;
+}
+html[data-theme="gold"] {
+  --color-emerald-50: #fef8ec;
+  --color-emerald-100: #fdf2d9;
+  --color-emerald-200: #fae5b2;
+  --color-emerald-300: #f7d482;
+  --color-emerald-400: #f4c452;
+  --color-emerald-500: #f1b527;
+  --color-emerald-600: #e1a20e;
+  --color-emerald-700: #bb860c;
+  --color-emerald-800: #906709;
+  --color-emerald-900: #694c07;
+  --color-emerald-950: #433004;
+  --accent: #e1a20e;
+  --accent-hover: #bb860c;
+  --d-bg: #14100A;
+  --d-surface: #1E170D;
+  --d-surface2: #2B2113;
+}
+
+:root { --accent: #7c3aed; --accent-hover: #6d28d9; --d-bg: #0F0B1F; --d-surface: #161030; --d-surface2: #1E1742; }
+
+/* ---- Chat wallpapers (pure CSS, no image files needed) ---- */
+.chat-wallpaper { background-color: var(--d-bg); background-size: cover; background-position: center; }
+html:not(.dark) .chat-wallpaper { background-image: none; background-color: #EEF2F5; }
+html.dark[data-theme="neon"] .chat-wallpaper {
+  background-image:
+    radial-gradient(circle at 85% 12%, rgba(196,181,253,.55) 0, rgba(124,58,237,.35) 6%, transparent 7.5%),
+    radial-gradient(ellipse at 50% 110%, rgba(124,58,237,.55), transparent 60%),
+    radial-gradient(1.5px 1.5px at 20% 30%, #fff9, transparent), radial-gradient(1.5px 1.5px at 70% 55%, #fff8, transparent),
+    radial-gradient(1px 1px at 40% 15%, #fff9, transparent), radial-gradient(1px 1px at 88% 70%, #fff7, transparent),
+    linear-gradient(180deg, #1b1245 0%, #0F0B1F 100%);
+}
+html.dark[data-theme="sky"] .chat-wallpaper {
+  background-image: radial-gradient(circle at 15% 10%, rgba(191,219,254,.6) 0, rgba(59,130,246,.3) 5%, transparent 6.5%),
+    radial-gradient(ellipse at 50% 120%, rgba(37,99,235,.55), transparent 60%), linear-gradient(180deg, #10265a 0%, #08101F 100%);
+}
+html.dark[data-theme="nature"] .chat-wallpaper {
+  background-image: radial-gradient(ellipse at 50% -10%, rgba(74,222,128,.35), transparent 55%),
+    radial-gradient(ellipse at 20% 110%, rgba(22,101,52,.6), transparent 55%), linear-gradient(180deg, #0f2f20 0%, #07140F 100%);
+}
+html.dark[data-theme="night"] .chat-wallpaper {
+  background-image: radial-gradient(circle at 80% 15%, rgba(226,232,240,.5) 0, rgba(99,102,241,.25) 5%, transparent 6.5%),
+    radial-gradient(1.5px 1.5px at 30% 25%, #fff9, transparent), radial-gradient(1px 1px at 60% 40%, #fff8, transparent),
+    linear-gradient(180deg, #121a3d 0%, #070912 100%);
+}
+html.dark[data-theme="pink"] .chat-wallpaper {
+  background-image: radial-gradient(ellipse at 50% -10%, rgba(244,114,182,.35), transparent 55%),
+    radial-gradient(ellipse at 80% 110%, rgba(190,24,93,.5), transparent 55%), linear-gradient(180deg, #3a1230 0%, #1A0B15 100%);
+}
+html.dark[data-theme="gold"] .chat-wallpaper {
+  background-image: radial-gradient(ellipse at 50% -10%, rgba(250,204,21,.3), transparent 55%),
+    radial-gradient(ellipse at 20% 110%, rgba(180,83,9,.5), transparent 55%), linear-gradient(180deg, #2c200c 0%, #14100A 100%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

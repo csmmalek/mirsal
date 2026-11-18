@@ -1,11 +1,15 @@
 import React from 'react';
 import {
   Bell,
+  LifeBuoy,
   LogOut,
   MessageCircle,
   Moon,
+  Palette,
+  Shield,
   Smartphone,
   Sun,
+  User as UserIcon,
 } from 'lucide-react';
 import type { User } from '../types/chat';
 
@@ -17,6 +21,10 @@ interface SidebarNavProps {
   onToggleTheme: () => void;
   onOpenNotifications: () => void;
   onOpenDevices: () => void;
+  onOpenProfile: () => void;
+  onOpenThemes: () => void;
+  onOpenSupport: () => void;
+  onOpenAdmin: () => void;
   onLogout: () => void;
   mobileHidden?: boolean;
 }
@@ -29,19 +37,28 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
   onToggleTheme,
   onOpenNotifications,
   onOpenDevices,
+  onOpenProfile,
+  onOpenThemes,
+  onOpenSupport,
+  onOpenAdmin,
   onLogout,
   mobileHidden,
 }) => {
+  const railBtn =
+    'min-h-[44px] min-w-[44px] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors';
   return (
     <>
       {/* Desktop Vertical Rail */}
       <nav
         aria-label="التنقل الرئيسي"
-        className="hidden md:flex flex-col items-center justify-between w-16 py-4 bg-white dark:bg-[#111820] border-l border-slate-200 dark:border-slate-800 shrink-0"
+        className="hidden md:flex flex-col items-center justify-between w-16 py-4 bg-white dark:bg-[var(--d-surface)] border-l border-slate-200 dark:border-slate-800 shrink-0"
       >
         <div className="flex flex-col items-center gap-3">
-          <div
-            title={currentUser.displayName}
+          <button
+            type="button"
+            onClick={onOpenProfile}
+            aria-label="الملف الشخصي"
+            title={`${currentUser.displayName} · ID ${currentUser.uid}`}
             className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700"
           >
             <img
@@ -50,17 +67,17 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover"
             />
-          </div>
+          </button>
 
           <button
             type="button"
             aria-label="المحادثات"
             title="المحادثات"
-            className="relative min-h-[44px] min-w-[44px] rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-[#0D7A5F] dark:text-emerald-400 flex items-center justify-center"
+            className="relative min-h-[44px] min-w-[44px] rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-[color:var(--accent)] dark:text-emerald-400 flex items-center justify-center"
           >
             <MessageCircle className="w-5 h-5" />
             {totalUnread > 0 && (
-              <span className="absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-md bg-[#0D7A5F] text-white text-[10px] font-bold tabular-nums flex items-center justify-center">
+              <span className="absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-md bg-[var(--accent)] text-white text-[10px] font-bold tabular-nums flex items-center justify-center">
                 {totalUnread}
               </span>
             )}
@@ -91,6 +108,23 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
             <Smartphone className="w-5 h-5" />
           </button>
 
+          <button type="button" onClick={onOpenThemes} aria-label="الثيمات" title="الثيمات" className={railBtn}>
+            <Palette className="w-5 h-5" />
+          </button>
+          <button type="button" onClick={onOpenSupport} aria-label="الدعم" title="الدعم" className={railBtn}>
+            <LifeBuoy className="w-5 h-5" />
+          </button>
+          {currentUser.isAdmin && (
+            <button
+              type="button"
+              onClick={onOpenAdmin}
+              aria-label="لوحة المطور"
+              title="لوحة المطور"
+              className="min-h-[44px] min-w-[44px] rounded-xl text-amber-500 hover:bg-amber-500/10 flex items-center justify-center transition-colors"
+            >
+              <Shield className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         <div className="flex flex-col items-center gap-2">
@@ -120,12 +154,12 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
       {!mobileHidden && (
         <nav
           aria-label="شريط التنقل للجوال"
-          className="md:hidden fixed bottom-0 left-0 right-0 z-30 h-16 bg-white/95 dark:bg-[#111820]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-4 items-center px-2"
+          className="md:hidden fixed bottom-0 left-0 right-0 z-30 h-16 bg-white/95 dark:bg-[var(--d-surface)]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-4 items-center px-2"
         >
           <button
             type="button"
             aria-label="المحادثات"
-            className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-[#0D7A5F] dark:text-emerald-400"
+            className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-[color:var(--accent)] dark:text-emerald-400"
           >
             <MessageCircle className="w-5 h-5" />
             <span className="text-[10px] font-semibold">المحادثات</span>
@@ -146,23 +180,23 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
           <button
             type="button"
-            onClick={onOpenDevices}
-            aria-label="الأجهزة"
+            onClick={onOpenThemes}
+            aria-label="الثيمات"
             className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-600 dark:text-slate-300"
           >
-            <Smartphone className="w-5 h-5" />
-            <span className="text-[10px] font-medium">الأجهزة</span>
+            <Palette className="w-5 h-5" />
+            <span className="text-[10px] font-medium">الثيم</span>
           </button>
 
 
           <button
             type="button"
-            onClick={onLogout}
+            onClick={onOpenProfile}
             aria-label="الحساب"
             className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-600 dark:text-slate-300"
           >
-            <LogOut className="w-5 h-5" />
-            <span className="text-[10px] font-medium">الحساب</span>
+            <UserIcon className="w-5 h-5" />
+            <span className="text-[10px] font-medium">حسابي</span>
           </button>
         </nav>
       )}

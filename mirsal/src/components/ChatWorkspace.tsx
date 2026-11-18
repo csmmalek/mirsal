@@ -108,7 +108,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
 
   if (!conversation) {
     return (
-      <main className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#F4F6F8] dark:bg-[#0B1117]">
+      <main className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#F4F6F8] dark:bg-[var(--d-bg)]">
         <div className="max-w-md space-y-4">
           <div className="w-16 h-16 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 mx-auto flex items-center justify-center">
             <Lock className="w-8 h-8" />
@@ -283,9 +283,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   };
 
   return (
-    <main className="flex-1 flex flex-col h-full min-w-0 bg-[#EEF2F5] dark:bg-[#0B1117]">
+    <main className="flex-1 flex flex-col h-full min-w-0 chat-wallpaper">
       {/* Chat Header */}
-      <header className="px-4 py-3 bg-white dark:bg-[#111820] border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
+      <header className="px-4 py-3 bg-white dark:bg-[var(--d-surface)] border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
@@ -357,7 +357,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
 
       {/* Message Stream */}
       <div className="flex-1 overflow-y-auto px-4 py-5 space-y-3" data-testid="message-stream">
-        <div className="max-w-lg mx-auto px-4 py-2 rounded-xl bg-white/80 dark:bg-[#111820]/90 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-600 dark:text-slate-400 flex items-center justify-center gap-2">
+        <div className="max-w-lg mx-auto px-4 py-2 rounded-xl bg-white/80 dark:bg-[var(--d-surface)]/90 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-600 dark:text-slate-400 flex items-center justify-center gap-2">
           <Lock className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400 shrink-0" />
           <span>الرسائل والمكالمات مشفرة طرف إلى طرف عبر AES-256-GCM</span>
         </div>
@@ -374,8 +374,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               <div
                 className={`group relative max-w-[85%] sm:max-w-[70%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                   isMine
-                    ? 'bg-[#0D7A5F] text-white rounded-tr-sm'
-                    : 'bg-white dark:bg-[#161F29] text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 rounded-tl-sm'
+                    ? 'bg-[var(--accent)] text-white rounded-tr-sm'
+                    : 'bg-white dark:bg-[var(--d-surface2)] text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 rounded-tl-sm'
                 }`}
               >
                 {conversation.type === 'group' && !isMine && msg.senderName && (
@@ -506,7 +506,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       </div>
 
       {/* Composer */}
-      <footer className="bg-white dark:bg-[#111820] border-t border-slate-200 dark:border-slate-800 px-3 sm:px-4 py-3 shrink-0">
+      <footer className="bg-white dark:bg-[var(--d-surface)] border-t border-slate-200 dark:border-slate-800 px-3 sm:px-4 py-3 shrink-0">
         {mediaError && (
           <div className="mb-2 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs text-red-700 dark:text-red-300 flex items-center justify-between">
             <span>{mediaError}</span>
@@ -533,7 +533,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         )}
 
         {showEmojiPicker && (
-          <div className="mb-2 p-2 rounded-xl bg-slate-50 dark:bg-[#161F29] border border-slate-200 dark:border-slate-700 flex items-center gap-1 flex-wrap">
+          <div className="mb-2 p-2 rounded-xl bg-slate-50 dark:bg-[var(--d-surface2)] border border-slate-200 dark:border-slate-700 flex items-center gap-1 flex-wrap">
             {QUICK_EMOJIS.map((em) => (
               <button
                 key={em}
@@ -565,7 +565,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => stopVoiceRecording(false)}
-                className="min-h-[40px] px-3.5 rounded-lg bg-[#0D7A5F] text-white text-xs font-semibold flex items-center gap-1.5"
+                className="min-h-[40px] px-3.5 rounded-lg bg-[var(--accent)] text-white text-xs font-semibold flex items-center gap-1.5"
               >
                 <Square className="w-3.5 h-3.5" />
                 <span>إرسال الصوت</span>
@@ -605,13 +605,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               onChange={(e) => handleDraftChange(e.target.value)}
               placeholder="اكتب رسالة مشفرة..."
               aria-label="كتابة رسالة مشفرة"
-              className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-[#0B1117] border border-transparent focus:border-emerald-600 focus:bg-white dark:focus:bg-[#161F29] text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none transition-colors"
+              className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-[var(--d-bg)] border border-transparent focus:border-emerald-600 focus:bg-white dark:focus:bg-[var(--d-surface2)] text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none transition-colors"
             />
             {draft.trim() ? (
               <button
                 type="submit"
                 aria-label="إرسال الرسالة"
-                className="min-h-[44px] min-w-[44px] px-4 rounded-xl bg-[#0D7A5F] hover:bg-[#0B664F] text-white flex items-center justify-center gap-1.5 text-sm font-semibold transition-colors shrink-0"
+                className="min-h-[44px] min-w-[44px] px-4 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white flex items-center justify-center gap-1.5 text-sm font-semibold transition-colors shrink-0"
               >
                 <Send className="w-4 h-4" />
                 <span className="hidden sm:inline">إرسال</span>

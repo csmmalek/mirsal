@@ -79,7 +79,48 @@ export const SCHEMA: string[] = [
     fails INTEGER NOT NULL,
     window_start INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS support_tickets (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    message TEXT NOT NULL,
+    reply TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    replied_at TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id, created_at)`,
 ];
+
+/** Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", so errors are ignored. */
+const COLUMN_MIGRATIONS: string[] = [
+  `ALTER TABLE users ADD COLUMN email TEXT`,
+  `ALTER TABLE users ADD COLUMN uid TEXT`,
+  `ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0`,
+];
+
+const INDEX_MIGRATIONS: string[] = [
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid ON users(uid)`,
+];
+
+/** A random, unused 5-digit account ID (10000-99999). */
+export async function newUid(db: D1Database): Promise<string> {
+  for (let i = 0; i < 60; i++) {
+    const n = 10000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 90000);
+    const uid = String(n);
+    const used = await db.prepare('SELECT 1 AS x FROM users WHERE uid = ?').bind(uid).first();
+    if (!used) return uid;
+  }
+  throw new Error('no free uid');
+}
+
+async function backfillUids(db: D1Database): Promise<void> {
+  const { results } = await db.prepare('SELECT id FROM users WHERE uid IS NULL').all<{ id: string }>();
+  for (const r of results) {
+    const uid = await newUid(db);
+    await db.prepare('UPDATE users SET uid = ? WHERE id = ? AND uid IS NULL').bind(uid, r.id).run();
+  }
+}
 
 let ready: Promise<void> | null = null;
 
@@ -87,7 +128,17 @@ export function ensureSchema(db: D1Database): Promise<void> {
   if (!ready) {
     ready = db
       .batch(SCHEMA.map((sql) => db.prepare(sql)))
-      .then(() => undefined)
+      .then(async () => {
+        for (const sql of COLUMN_MIGRATIONS) {
+          try {
+            await db.prepare(sql).run();
+          } catch {
+            /* column already exists */
+          }
+        }
+        await db.batch(INDEX_MIGRATIONS.map((sql) => db.prepare(sql)));
+        await backfillUids(db);
+      })
       .catch((err) => {
         ready = null;
         throw err;

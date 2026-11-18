@@ -7,16 +7,22 @@ import type {
   PushNotificationItem,
   User,
 } from '../src/types/chat';
+import { isAdminEmail } from './admin';
 import { makeAvatar } from './util';
 
 type Row = Record<string, unknown>;
 
-export function mapUser(row: Row, online: Set<string>): User {
+/** `includeEmail` is only true for a user's own profile: emails are never shown to other people. */
+export function mapUser(row: Row, online: Set<string>, includeEmail = false): User {
   const id = String(row.id);
   const displayName = String(row.display_name);
+  const uid = String(row.uid ?? row.username);
   return {
     id,
-    username: String(row.username),
+    uid,
+    username: uid,
+    isAdmin: isAdminEmail(row.email),
+    ...(includeEmail ? { email: String(row.email ?? '') } : {}),
     displayName,
     avatar: makeAvatar(displayName, id),
     bio: String(row.bio ?? ''),

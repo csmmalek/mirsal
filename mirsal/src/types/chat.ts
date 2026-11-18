@@ -6,7 +6,13 @@ export type ConversationFilter = 'all' | 'unread' | 'groups';
 
 export interface User {
   id: string;
+  /** The public 5-digit account ID, e.g. "48213". */
+  uid: string;
+  /** Same as uid (kept so older UI code keeps working). */
   username: string;
+  isAdmin: boolean;
+  /** Present only on the signed-in user's own profile. */
+  email?: string;
   displayName: string;
   avatar: string;
   bio: string;

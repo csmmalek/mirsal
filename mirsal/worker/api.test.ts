@@ -69,8 +69,8 @@ async function call(method: string, path: string, body?: unknown, token?: string
 
 const pub = JSON.stringify({ kty: 'EC', crv: 'P-256', x: 'a'.repeat(43), y: 'b'.repeat(43) });
 const secret = 'S'.repeat(44);
-const reg = (username: string, displayName = username) => ({
-  username,
+const reg = (email: string, displayName = email.split('@')[0]) => ({
+  email,
   displayName,
   authSecret: secret,
   publicKey: pub,
@@ -81,42 +81,45 @@ const reg = (username: string, displayName = username) => ({
 });
 
 test('register, login, /me and wrong-password handling', async () => {
-  const r = await call('POST', '/api/auth/register', reg('layla', 'ليلى'));
+  const r = await call('POST', '/api/auth/register', reg('layla@test.dev', 'ليلى'));
   assert.equal(r.status, 200);
   assert.ok(r.data.token);
   assert.match(r.data.user.avatar, /^data:image\/svg\+xml/);
 
-  const dup = await call('POST', '/api/auth/register', reg('layla'));
+  const dup = await call('POST', '/api/auth/register', reg('layla@test.dev'));
   assert.equal(dup.status, 409);
 
   const badName = await call('POST', '/api/auth/register', reg('A b'));
   assert.equal(badName.status, 400);
 
   const me = await call('GET', '/api/me', undefined, r.data.token);
-  assert.equal(me.data.user.username, 'layla');
+  assert.equal(me.data.user.email, 'layla@test.dev');
+  assert.match(me.data.user.uid, /^\d{5}$/);
+  assert.equal(r.data.user.isAdmin, false);
   assert.equal((await call('GET', '/api/me')).status, 401);
   assert.equal((await call('GET', '/api/me', undefined, 'x'.repeat(40))).status, 401);
 
-  const ok = await call('POST', '/api/auth/login', { username: 'layla', authSecret: secret, deviceName: 'ph', deviceType: 'android' });
+  const ok = await call('POST', '/api/auth/login', { identifier: 'layla@test.dev', authSecret: secret, deviceName: 'ph', deviceType: 'android' });
   assert.equal(ok.status, 200);
   assert.equal(ok.data.encryptedPrivateKey, 'QUJD'.repeat(10));
 
   for (let i = 0; i < 8; i++) {
-    const bad = await call('POST', '/api/auth/login', { username: 'layla', authSecret: 'W'.repeat(44) });
+    const bad = await call('POST', '/api/auth/login', { identifier: 'layla@test.dev', authSecret: 'W'.repeat(44) });
     assert.equal(bad.status, 401);
   }
-  const locked = await call('POST', '/api/auth/login', { username: 'layla', authSecret: secret });
+  const locked = await call('POST', '/api/auth/login', { identifier: 'layla@test.dev', authSecret: secret });
   assert.equal(locked.status, 429);
-  assert.equal((await call('POST', '/api/auth/login', { username: 'ghost', authSecret: secret })).status, 401);
+  assert.equal((await call('POST', '/api/auth/login', { identifier: 'ghost@test.dev', authSecret: secret })).status, 401);
 });
 
 test('conversations, encrypted messages, read receipts, notifications, devices', async () => {
-  const a = (await call('POST', '/api/auth/register', reg('amal'))).data;
-  const b = (await call('POST', '/api/auth/register', reg('basem'))).data;
-  const c = (await call('POST', '/api/auth/register', reg('carim'))).data;
+  const a = (await call('POST', '/api/auth/register', reg('amal@test.dev'))).data;
+  const b = (await call('POST', '/api/auth/register', reg('basem@test.dev'))).data;
+  const c = (await call('POST', '/api/auth/register', reg('carim@test.dev'))).data;
 
   const found = await call('GET', '/api/users/search?q=bas', undefined, a.token);
-  assert.deepEqual(found.data.users.map((u: any) => u.username), ['basem']);
+  assert.deepEqual(found.data.users.map((u: any) => u.displayName), ['basem']);
+  assert.ok(!('email' in found.data.users[0]), 'emails are never shown to other users');
   assert.equal((await call('GET', '/api/users/search?q=b', undefined, a.token)).data.users.length, 0);
 
   const keys = (ids: string[]) => ids.map((userId) => ({ userId, wrappedKey: 'QUJD'.repeat(12), iv: 'AAAAAAAAAAAAAAAA' }));
@@ -187,4 +190,51 @@ test('conversations, encrypted messages, read receipts, notifications, devices',
 
   assert.equal((await call('GET', '/api/ice', undefined, a.token)).data.turn, false);
   assert.equal((await call('GET', '/api/nope', undefined, a.token)).status, 404);
+});
+
+test('developer account is reserved, admin APIs are admin-only, bans and ID edits work', async () => {
+  const admin = 'zmalqpgg7777@gmail.com';
+  const noSecret = await call('POST', '/api/auth/register', { ...reg(admin), setupCode: 'x' });
+  assert.equal(noSecret.status, 403, 'blocked while ADMIN_SETUP_CODE is unset');
+
+  env.ADMIN_SETUP_CODE = 's3cret-code';
+  const wrong = await call('POST', '/api/auth/register', { ...reg(admin), setupCode: 'nope' });
+  assert.equal(wrong.status, 403);
+  const adm = await call('POST', '/api/auth/register', { ...reg(admin), setupCode: 's3cret-code' });
+  assert.equal(adm.status, 200);
+  assert.equal(adm.data.user.isAdmin, true);
+
+  const user = (await call('POST', '/api/auth/register', reg('dina@test.dev', 'دينا'))).data;
+  assert.equal(user.user.isAdmin, false);
+  assert.equal((await call('GET', '/api/admin/stats', undefined, user.token)).status, 403);
+  assert.equal((await call('GET', '/api/admin/users', undefined, user.token)).status, 403);
+
+  const stats = await call('GET', '/api/admin/stats', undefined, adm.data.token);
+  assert.equal(stats.status, 200);
+  assert.ok(stats.data.users >= 2);
+
+  const list = await call('GET', `/api/admin/users?q=${user.user.uid}`, undefined, adm.data.token);
+  assert.equal(list.data.users.length, 1);
+  assert.equal(list.data.users[0].email, 'dina@test.dev');
+
+  const taken = await call('PATCH', `/api/admin/users/${user.user.id}`, { uid: adm.data.user.uid }, adm.data.token);
+  assert.equal(taken.status, 409);
+  const badId = await call('PATCH', `/api/admin/users/${user.user.id}`, { uid: '12' }, adm.data.token);
+  assert.equal(badId.status, 400);
+  const freeId = adm.data.user.uid === '55555' ? '55556' : '55555';
+  assert.equal((await call('PATCH', `/api/admin/users/${user.user.id}`, { uid: freeId }, adm.data.token)).status, 200);
+  assert.equal((await call('GET', '/api/me', undefined, user.token)).data.user.uid, freeId);
+
+  assert.equal((await call('PATCH', `/api/admin/users/${adm.data.user.id}`, { banned: true }, adm.data.token)).status, 400);
+  assert.equal((await call('PATCH', `/api/admin/users/${user.user.id}`, { banned: true }, adm.data.token)).status, 200);
+  assert.equal((await call('GET', '/api/me', undefined, user.token)).status, 401, 'banned sessions are dropped');
+  const loginBanned = await call('POST', '/api/auth/login', { identifier: 'dina@test.dev', authSecret: secret });
+  assert.equal(loginBanned.status, 403);
+
+  const t = await call('POST', '/api/support', { message: 'مرحبا، عندي مشكلة' }, adm.data.token);
+  assert.equal(t.status, 200);
+  const tickets = await call('GET', '/api/admin/tickets', undefined, adm.data.token);
+  assert.equal(tickets.data.tickets.length, 1);
+  const replied = await call('POST', `/api/admin/tickets/${tickets.data.tickets[0].id}/reply`, { reply: 'تم' }, adm.data.token);
+  assert.equal(replied.status, 200);
 });
