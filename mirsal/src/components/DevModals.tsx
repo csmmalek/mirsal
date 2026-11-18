@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Ban,
+  Camera,
   Check,
   Copy,
   LifeBuoy,
@@ -17,6 +18,7 @@ import type { User } from '../types/chat';
 import { THEMES } from '../themes';
 import { FALLBACK_WALLPAPERS, applyWallpaper, currentWallpaper, getWallpapers } from '../appearance';
 import { ModalShell } from './SideModals';
+import { errorMessage, readError } from '../api/client';
 
 type Api = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -27,15 +29,6 @@ const ghostBtn = `${btn} bg-slate-100 dark:bg-white/5 text-slate-800 dark:text-s
 const fieldCls =
   'w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[var(--d-bg)] text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500';
 
-async function readError(res: Response, fallback: string): Promise<string> {
-  try {
-    const d = (await res.json()) as { error?: string };
-    return d.error || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 const fmtDate = (iso: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('ar', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -43,16 +36,113 @@ const fmtDate = (iso: string) => {
 
 /* ------------------------------- Profile ------------------------------- */
 
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_AVATAR_SOURCE_BYTES = 12 * 1024 * 1024;
+
+/** يقصّ الصورة مربعة ويصغّرها إلى 256px بصيغة JPEG (حجمها نحو 15-30 كيلوبايت). */
+function prepareAvatar(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const side = Math.min(img.naturalWidth, img.naturalHeight);
+      if (!side) return reject(new Error('bad'));
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return reject(new Error('bad'));
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      const sx = (img.naturalWidth - side) / 2;
+      const sy = (img.naturalHeight - side) / 2;
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      for (const q of [0.85, 0.7, 0.55, 0.4]) {
+        const out = canvas.toDataURL('image/jpeg', q);
+        if (out.length <= 80_000) return resolve(out);
+      }
+      reject(new Error('too large'));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('bad'));
+    };
+    img.src = url;
+  });
+}
+
+
 export const ProfileModal: React.FC<{
   user: User;
+  api: Api;
+  onUserChange: (user: User) => void;
   onClose: () => void;
   onOpenDevices: () => void;
   onOpenSupport: () => void;
   onOpenThemes: () => void;
   onOpenAdmin: () => void;
   onLogout: () => void;
-}> = ({ user, onClose, onOpenDevices, onOpenSupport, onOpenThemes, onOpenAdmin, onLogout }) => {
+}> = ({ user, api, onUserChange, onClose, onOpenDevices, onOpenSupport, onOpenThemes, onOpenAdmin, onLogout }) => {
   const [copied, setCopied] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const hasCustomAvatar = !user.avatar.startsWith('data:image/svg+xml');
+
+  const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAvatarError(null);
+    if (!AVATAR_TYPES.includes(file.type)) {
+      setAvatarError('نوع الصورة غير مدعوم، اختر صورة بصيغة JPG أو PNG أو WebP');
+      return;
+    }
+    if (file.size > MAX_AVATAR_SOURCE_BYTES) {
+      setAvatarError('حجم الصورة كبير جداً، اختر صورة أقل من 12 ميغابايت');
+      return;
+    }
+    setAvatarBusy(true);
+    try {
+      let avatar: string;
+      try {
+        avatar = await prepareAvatar(file);
+      } catch {
+        setAvatarError('تعذر قراءة الصورة، جرّب صورة أخرى');
+        return;
+      }
+      const res = await api('/api/me/avatar', { method: 'PUT', body: JSON.stringify({ avatar }) });
+      if (!res.ok) {
+        setAvatarError(await readError(res, 'تعذر حفظ الصورة'));
+        return;
+      }
+      onUserChange(((await res.json()) as { user: User }).user);
+    } catch (err) {
+      setAvatarError(errorMessage(err, 'تعذر رفع الصورة'));
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
+  const removeAvatar = async () => {
+    setAvatarError(null);
+    setAvatarBusy(true);
+    try {
+      const res = await api('/api/me/avatar', { method: 'DELETE' });
+      if (!res.ok) {
+        setAvatarError(await readError(res, 'تعذر حذف الصورة'));
+        return;
+      }
+      onUserChange(((await res.json()) as { user: User }).user);
+    } catch (err) {
+      setAvatarError(errorMessage(err, 'تعذر حذف الصورة'));
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(user.uid);
@@ -65,7 +155,30 @@ export const ProfileModal: React.FC<{
   return (
     <ModalShell title="الملف الشخصي" onClose={onClose}>
       <div className="flex flex-col items-center text-center gap-2 mb-5">
-        <img src={user.avatar} alt="" className="w-20 h-20 rounded-full object-cover" />
+        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onPickAvatar} />
+        <div className="relative">
+          <img src={user.avatar} alt="" className="w-24 h-24 rounded-full object-cover" />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={avatarBusy}
+            aria-label="تغيير الصورة الشخصية"
+            className="btn-glass absolute -bottom-1 -left-1 w-9 h-9 rounded-full flex items-center justify-center"
+          >
+            <Camera className="w-4 h-4" />
+          </button>
+        </div>
+        {avatarBusy && <p className="text-[11px] text-slate-500 dark:text-slate-400">جارٍ حفظ الصورة...</p>}
+        {avatarError && (
+          <p role="alert" className="text-xs text-red-600 dark:text-red-400 max-w-[260px]">
+            {avatarError}
+          </p>
+        )}
+        {hasCustomAvatar && !avatarBusy && (
+          <button type="button" onClick={removeAvatar} className="text-[11px] text-slate-500 dark:text-slate-400 hover:underline">
+            إزالة الصورة
+          </button>
+        )}
         <div className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-1.5">
           {user.displayName}
           {user.isAdmin && <Shield className="w-4 h-4 text-amber-500" aria-label="المطور" />}

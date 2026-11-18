@@ -156,6 +156,31 @@ const me: Handler = async ({ env, auth }) => {
   return json({ user: mapUser(row, await getOnlineUserIds(env), true), deviceId: a.deviceId });
 };
 
+
+const MAX_AVATAR_CHARS = 90_000; // ~65 KB image; the client sends a 256px JPEG of roughly 15-30 KB
+const AVATAR_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/;
+
+const putAvatar: Handler = async ({ req, env, auth }) => {
+  const a = requireAuth(auth);
+  const b = await readJson(req);
+  const avatar = typeof b.avatar === 'string' ? b.avatar : '';
+  if (!avatar) throw new HttpError(400, 'لم يتم إرسال صورة');
+  if (avatar.length > MAX_AVATAR_CHARS) throw new HttpError(413, 'الصورة كبيرة جداً، اختر صورة أصغر');
+  if (!AVATAR_RE.test(avatar)) throw new HttpError(415, 'نوع الصورة غير مدعوم، استخدم JPG أو PNG أو WebP');
+  await env.DB.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').bind(avatar, a.userId).run();
+  const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(a.userId).first<Record<string, unknown>>();
+  if (!row) throw new HttpError(401, 'الحساب غير موجود');
+  return json({ user: mapUser(row, await getOnlineUserIds(env), true) });
+};
+
+const deleteAvatar: Handler = async ({ env, auth }) => {
+  const a = requireAuth(auth);
+  await env.DB.prepare('UPDATE users SET avatar_url = NULL WHERE id = ?').bind(a.userId).run();
+  const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(a.userId).first<Record<string, unknown>>();
+  if (!row) throw new HttpError(401, 'الحساب غير موجود');
+  return json({ user: mapUser(row, await getOnlineUserIds(env), true) });
+};
+
 /* ------------------------------ Users ------------------------------ */
 
 const searchUsers: Handler = async ({ env, auth, url }) => {
@@ -717,6 +742,8 @@ const routes: Route[] = [
   { method: 'POST', pattern: /^\/api\/auth\/login$/, handler: login, public: true },
   { method: 'POST', pattern: /^\/api\/auth\/logout$/, handler: logout },
   { method: 'GET', pattern: /^\/api\/me$/, handler: me },
+  { method: 'PUT', pattern: /^\/api\/me\/avatar$/, handler: putAvatar },
+  { method: 'DELETE', pattern: /^\/api\/me\/avatar$/, handler: deleteAvatar },
   { method: 'GET', pattern: /^\/api\/users\/search$/, handler: searchUsers },
   { method: 'GET', pattern: /^\/api\/conversations$/, handler: listConversations },
   { method: 'POST', pattern: /^\/api\/conversations$/, handler: createConversation },

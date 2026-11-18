@@ -13,8 +13,8 @@ function makeD1(): D1Database {
     first: async <T>() => ((sqlite.prepare(sql).get(...(params as never[])) as T | undefined) ?? null),
     all: async <T>() => ({ results: sqlite.prepare(sql).all(...(params as never[])) as T[], success: true, meta: {} }),
     run: async () => {
-      sqlite.prepare(sql).run(...(params as never[]));
-      return { results: [], success: true, meta: {} };
+      const info = sqlite.prepare(sql).run(...(params as never[]));
+      return { results: [], success: true, meta: { changes: Number(info.changes) } };
     },
     // exposed for batch
     ...({ _sql: sql, _params: params } as object),
@@ -237,4 +237,29 @@ test('developer account is reserved, admin APIs are admin-only, bans and ID edit
   assert.equal(tickets.data.tickets.length, 1);
   const replied = await call('POST', `/api/admin/tickets/${tickets.data.tickets[0].id}/reply`, { reply: 'تم' }, adm.data.token);
   assert.equal(replied.status, 200);
+});
+
+test('profile photo: upload, validation, removal and fallback avatar', async () => {
+  const u = await call('POST', '/api/auth/register', reg('photo@test.dev', 'سارة'));
+  assert.equal(u.status, 200);
+  const token = u.data.token as string;
+  const photo = 'data:image/jpeg;base64,' + 'QUJD'.repeat(50);
+
+  assert.equal((await call('PUT', '/api/me/avatar', { avatar: photo })).status, 401);
+  assert.equal((await call('PUT', '/api/me/avatar', {}, token)).status, 400);
+  assert.equal((await call('PUT', '/api/me/avatar', { avatar: 'https://evil.test/x.png' }, token)).status, 415);
+  assert.equal((await call('PUT', '/api/me/avatar', { avatar: 'data:image/svg+xml;base64,QUJD' }, token)).status, 415);
+  assert.equal(
+    (await call('PUT', '/api/me/avatar', { avatar: 'data:image/jpeg;base64,' + 'A'.repeat(100_000) }, token)).status,
+    413
+  );
+
+  const ok = await call('PUT', '/api/me/avatar', { avatar: photo }, token);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.data.user.avatar, photo);
+  assert.equal((await call('GET', '/api/me', undefined, token)).data.user.avatar, photo);
+
+  const del = await call('DELETE', '/api/me/avatar', undefined, token);
+  assert.equal(del.status, 200);
+  assert.match(del.data.user.avatar, /^data:image\/svg\+xml/);
 });

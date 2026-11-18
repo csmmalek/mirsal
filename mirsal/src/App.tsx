@@ -8,6 +8,7 @@ import { SidebarNav } from './components/SidebarNav';
 import { ChatInfoModal, DevicesModal, NewChatModal, NotificationsModal } from './components/SideModals';
 import { AdminModal, ProfileModal, SupportModal, ThemeModal } from './components/DevModals';
 import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
+import { createApi } from './api/client';
 import type {
   ActiveCallState,
   Conversation,
@@ -167,19 +168,8 @@ export default function App() {
     setActiveCall(null);
   }, []);
 
-  const api = useCallback(
-    async (path: string, init: RequestInit = {}): Promise<Response> => {
-      const res = await fetch(path, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : {}),
-          ...(init.headers as Record<string, string> | undefined),
-        },
-      });
-      if (res.status === 401 && tokenRef.current && !path.startsWith('/api/auth/')) clearSession();
-      return res;
-    },
+  const api = useMemo(
+    () => createApi({ getToken: () => tokenRef.current, onUnauthorized: clearSession }),
     [clearSession]
   );
 
@@ -376,9 +366,9 @@ export default function App() {
   }, []);
 
   const sendMessageTo = useCallback(
-    async (convId: string, type: MessageType, payload: DecryptedMessagePayload) => {
+    async (convId: string, type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
       const user = currentUserRef.current;
-      if (!user) return;
+      if (!user) return false;
       const id = newMsgId();
       const createdAt = new Date().toISOString();
       const setStatus = (status: Message['status']) =>
@@ -393,7 +383,8 @@ export default function App() {
         const key = await getConversationKey(convId);
         ({ ciphertext, iv } = await encryptMessagePayload(payload, key));
       } catch {
-        return;
+        // تعذّر التشفير (مفتاح المحادثة غير متاح): لا نُظهر رسالة وهمية، ويحتفظ الحقل بالنص ليعيد المستخدم المحاولة.
+        return false;
       }
 
       const optimistic: Message = {
@@ -413,32 +404,67 @@ export default function App() {
         prev.map((c) => (c.id === convId ? { ...c, updatedAt: createdAt, lastMessage: optimistic } : c))
       );
 
+      // الرسالة ظاهرة الآن (حالة «جارٍ الإرسال»)؛ التسليم للخادم يكمل في الخلفية دون حجب الواجهة.
+      void (async () => {
+        try {
+          const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ id, type, ciphertext, iv }),
+          });
+          if (!res.ok) throw new Error(String(res.status));
+          const { message } = (await res.json()) as { message: Message };
+          // Never downgrade: the realtime echo may already have marked it delivered/read.
+          setMessagesByConv((prev) => ({
+            ...prev,
+            [convId]: (prev[convId] || []).map((m) =>
+              m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            ),
+          }));
+        } catch {
+          setStatus('failed');
+        }
+      })();
+      return true;
+    },
+    [api, getConversationKey]
+  );
+
+  const handleSendMessage = useCallback(
+    async (type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
+      if (!activeConvIdRef.current) return false;
+      return sendMessageTo(activeConvIdRef.current, type, payload);
+    },
+    [sendMessageTo]
+  );
+
+  /** إعادة إرسال رسالة فشلت: نفس المعرّف، والخادم يتجاهل التكرار فلا تصل نسختان. */
+  const handleRetryMessage = useCallback(
+    async (msg: Message) => {
+      const convId = msg.conversationId;
+      const setStatus = (status: Message['status']) =>
+        setMessagesByConv((prev) => ({
+          ...prev,
+          [convId]: (prev[convId] || []).map((m) => (m.id === msg.id ? { ...m, status } : m)),
+        }));
+      setStatus('sending');
       try {
         const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
           method: 'POST',
-          body: JSON.stringify({ id, type, ciphertext, iv }),
+          body: JSON.stringify({ id: msg.id, type: msg.type, ciphertext: msg.ciphertext, iv: msg.iv }),
         });
         if (!res.ok) throw new Error(String(res.status));
         const { message } = (await res.json()) as { message: Message };
-        // Never downgrade: the realtime echo may already have marked it delivered/read.
         setMessagesByConv((prev) => ({
           ...prev,
           [convId]: (prev[convId] || []).map((m) =>
-            m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            m.id === msg.id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
           ),
         }));
       } catch {
         setStatus('failed');
       }
     },
-    [api, getConversationKey]
-  );
-
-  const handleSendMessage = useCallback(
-    async (type: MessageType, payload: DecryptedMessagePayload) => {
-      if (activeConvIdRef.current) await sendMessageTo(activeConvIdRef.current, type, payload);
-    },
-    [sendMessageTo]
+    [api]
   );
 
   /** Ends local call state; the caller's device writes the call record into the chat. */
@@ -961,6 +987,7 @@ export default function App() {
           typingUsers={activeConversationId ? typingByConv[activeConversationId] || [] : []}
           onBackMobile={() => setMobileView('list')}
           onSendMessage={handleSendMessage}
+          onRetryMessage={handleRetryMessage}
           onTyping={handleTyping}
           onStartCall={handleStartCall}
           onOpenChatInfo={() => setActiveModal('chat_info')}
@@ -1024,6 +1051,8 @@ export default function App() {
       {activeModal === 'profile' && (
         <ProfileModal
           user={currentUser}
+          api={api}
+          onUserChange={setCurrentUser}
           onClose={() => setActiveModal(null)}
           onOpenDevices={() => setActiveModal('devices')}
           onOpenSupport={() => setActiveModal('support')}

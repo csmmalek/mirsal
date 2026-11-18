@@ -12,6 +12,11 @@ import { makeAvatar } from './util';
 
 type Row = Record<string, unknown>;
 
+/** A user-uploaded photo is stored as a small data URI; anything else falls back to the generated initials avatar. */
+function customAvatar(v: unknown): string | null {
+  return typeof v === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(v) ? v : null;
+}
+
 /** `includeEmail` is only true for a user's own profile: emails are never shown to other people. */
 export function mapUser(row: Row, online: Set<string>, includeEmail = false): User {
   const id = String(row.id);
@@ -24,7 +29,7 @@ export function mapUser(row: Row, online: Set<string>, includeEmail = false): Us
     isAdmin: isAdminEmail(row.email),
     ...(includeEmail ? { email: String(row.email ?? '') } : {}),
     displayName,
-    avatar: makeAvatar(displayName, id),
+    avatar: customAvatar(row.avatar_url) ?? makeAvatar(displayName, id),
     bio: String(row.bio ?? ''),
     publicKey: String(row.public_key),
     online: online.has(id),

@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Check,
   CheckCheck,
+  Clock,
   Download,
   FileText,
   Info,
@@ -12,6 +13,7 @@ import {
   Phone,
   PhoneCall,
   Reply,
+  RotateCw,
   Send,
   Smile,
   Square,
@@ -28,7 +30,9 @@ interface ChatWorkspaceProps {
   currentUserId: string;
   typingUsers: string[];
   onBackMobile: () => void;
-  onSendMessage: (type: MessageType, payload: DecryptedMessagePayload) => Promise<void>;
+  /** تعيد true حين تُقبل الرسالة وتظهر في المحادثة، وfalse إن تعذّر تجهيزها (يبقى النص في الحقل). */
+  onSendMessage: (type: MessageType, payload: DecryptedMessagePayload) => Promise<boolean>;
+  onRetryMessage: (msg: Message) => void;
   onTyping: (isTyping: boolean) => void;
   onStartCall: (kind: 'audio' | 'video') => void;
   onOpenChatInfo: () => void;
@@ -70,6 +74,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   typingUsers,
   onBackMobile,
   onSendMessage,
+  onRetryMessage,
   onTyping,
   onStartCall,
   onOpenChatInfo,
@@ -88,6 +93,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<number | null>(null);
   const typingTimeoutRef = useRef<number | null>(null);
+  const sendLockRef = useRef(false);
 
   useEffect(() => {
     streamEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -150,17 +156,35 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const handleSendText = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const text = draft.trim();
-    if (!text) return;
-    setDraft('');
-    onTyping(false);
-    setShowEmojiPicker(false);
-    const payload: DecryptedMessagePayload = { text };
-    if (replyTo) {
-      payload.replyToId = replyTo.id;
-      payload.replyPreview = replyTo.decrypted?.text || 'وسائط مشفرة';
+    if (!text || sendLockRef.current) return;
+    sendLockRef.current = true;
+    setMediaError(null);
+    try {
+      const payload: DecryptedMessagePayload = { text };
+      if (replyTo) {
+        payload.replyToId = replyTo.id;
+        payload.replyPreview = replyTo.decrypted?.text || 'وسائط مشفرة';
+      }
+      const accepted = await onSendMessage('text', payload);
+      if (!accepted) {
+        // لا نفرّغ الحقل: النص باقٍ ليعيد المستخدم المحاولة.
+        setMediaError('تعذر إرسال الرسالة، تحقق من الاتصال وحاول مجدداً');
+        return;
+      }
+      setDraft('');
       setReplyTo(null);
+      setShowEmojiPicker(false);
+      onTyping(false);
+    } finally {
+      sendLockRef.current = false;
     }
-    await onSendMessage('text', payload);
+  };
+
+  const handleDraftKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      void handleSendText();
+    }
   };
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -191,14 +215,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         return;
       }
       if (file.type.startsWith('image/')) {
-        await onSendMessage('image', {
+        const ok = await onSendMessage('image', {
           text: draft.trim() || undefined,
           mediaUrl: dataUrl,
           mediaName: file.name,
           mediaSize: file.size,
           mimeType: file.type,
         });
-        setDraft('');
+        if (ok) setDraft('');
+        else setMediaError('تعذر إرسال الصورة، حاول مجدداً');
       } else if (file.type.startsWith('audio/')) {
         await onSendMessage('audio', {
           mediaUrl: dataUrl,
@@ -485,9 +510,25 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                   </button>
                   <span>{formatArabicTime(msg.createdAt)}</span>
                   {isMine && (
-                    <span>
+                    <span className="flex items-center gap-1">
                       {msg.status === 'failed' ? (
-                        <span className="text-red-200 font-semibold">فشل الإرسال</span>
+                        <>
+                          <span className="text-red-200 font-semibold">فشل الإرسال</span>
+                          <button
+                            type="button"
+                            onClick={() => onRetryMessage(msg)}
+                            aria-label="إعادة محاولة الإرسال"
+                            className="min-h-[24px] px-1.5 rounded-md bg-white/20 hover:bg-white/30 flex items-center gap-1 font-semibold"
+                          >
+                            <RotateCw className="w-3 h-3" />
+                            <span>إعادة المحاولة</span>
+                          </button>
+                        </>
+                      ) : msg.status === 'sending' ? (
+                        <span className="flex items-center gap-1 opacity-80">
+                          <Clock className="w-3.5 h-3.5 animate-pulse" />
+                          <span>جارٍ الإرسال</span>
+                        </span>
                       ) : msg.status === 'read' ? (
                         <CheckCheck className="w-3.5 h-3.5" />
                       ) : msg.status === 'delivered' ? (
@@ -603,30 +644,31 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               type="text"
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
+              onKeyDown={handleDraftKeyDown}
+              enterKeyHint="send"
+              autoComplete="off"
               placeholder="اكتب رسالة مشفرة..."
               aria-label="كتابة رسالة مشفرة"
               className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-[var(--d-bg)] border border-transparent focus:border-emerald-600 focus:bg-white dark:focus:bg-[var(--d-surface2)] text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none transition-colors"
             />
-            {draft.trim() ? (
-              <button
-                type="submit"
-                aria-label="إرسال الرسالة"
-                className="btn-glass min-h-[44px] min-w-[44px] px-4 rounded-xl flex items-center justify-center gap-1.5 text-sm font-semibold shrink-0"
-              >
-                <Send className="w-4 h-4" />
-                <span className="hidden sm:inline">إرسال</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={startVoiceRecording}
-                aria-label="تسجيل رسالة صوتية"
-                title="تسجيل رسالة صوتية"
-                className="min-h-[44px] min-w-[44px] rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center transition-colors shrink-0"
-              >
-                <Mic className="w-5 h-5" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={startVoiceRecording}
+              aria-label="تسجيل رسالة صوتية"
+              title="تسجيل رسالة صوتية"
+              className="min-h-[44px] min-w-[44px] rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center transition-colors shrink-0"
+            >
+              <Mic className="w-5 h-5" />
+            </button>
+            <button
+              type="submit"
+              disabled={!draft.trim()}
+              aria-label="إرسال الرسالة"
+              title="إرسال"
+              className="btn-glass send-btn w-12 h-12 rounded-full flex items-center justify-center shrink-0 disabled:cursor-not-allowed"
+            >
+              <Send className="w-5 h-5 -scale-x-100" />
+            </button>
           </form>
         )}
       </footer>

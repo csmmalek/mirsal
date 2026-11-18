@@ -214,3 +214,19 @@ html.dark[data-theme="gold"] .chat-wallpaper {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---- Send button (always visible; disabled when the field is empty) ---- */
+.send-btn {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.38) 0%, rgba(255,255,255,0) 52%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 78%, #fff) 0%, var(--accent) 55%, var(--accent-hover) 100%);
+}
+.send-btn:disabled {
+  background: rgba(148, 163, 184, .28);
+  border-color: rgba(148, 163, 184, .35);
+  box-shadow: none;
+  color: rgba(100, 116, 139, .9);
+  opacity: 1;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}

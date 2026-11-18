@@ -101,6 +101,7 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN email TEXT`,
   `ALTER TABLE users ADD COLUMN uid TEXT`,
   `ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN avatar_url TEXT`,
 ];
 
 const INDEX_MIGRATIONS: string[] = [
