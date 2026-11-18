@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mirsal",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-09-01",
+  "observability": { "enabled": true },
+
+  // The built web app (npm run build -> dist/) is served by Cloudflare itself.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/ws"]
+  },
+
+  // Database. Create it once (see DEPLOY.md) and paste its id below.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mirsal-db",
+      "database_id": "3fa53d26-1f25-48fa-9377-28f6947263ce"
+    }
+  ],
+
+  // Live WebSocket hub (messages, presence, typing, call signaling).
+  "durable_objects": {
+    "bindings": [{ "name": "HUB", "class_name": "Hub" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hub"] }]
+
+  // Optional, for voice/video on mobile data: add secrets TURN_KEY_ID and TURN_KEY_API_TOKEN
+  // (Cloudflare dashboard > Worker > Settings > Variables and Secrets). See DEPLOY.md.
+}
