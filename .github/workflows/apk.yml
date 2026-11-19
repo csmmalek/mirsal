@@ -12,8 +12,12 @@ jobs:
           java-version: 11
       - name: Install Android SDK packages
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" "platforms;android-28" "build-tools;28.0.3"
+          ls "$ANDROID_HOME/cmdline-tools" || true
+          SDKM="$(command -v sdkmanager || true)"
+          if [ -z "$SDKM" ]; then SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"; fi
+          echo "Using $SDKM"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-28" "build-tools;28.0.3"
       - uses: gradle/gradle-build-action@v2
         with:
           gradle-version: 6.7.1
