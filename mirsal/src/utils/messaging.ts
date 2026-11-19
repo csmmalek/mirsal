@@ -83,3 +83,8 @@ export function formatCallDuration(totalSeconds: number): string {
   const secs = safe % 60;
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
+
+/** The send button is enabled only for non-blank text while no send is in flight. */
+export function canSendDraft(draft: string, sending: boolean): boolean {
+  return !sending && draft.trim().length > 0;
+}

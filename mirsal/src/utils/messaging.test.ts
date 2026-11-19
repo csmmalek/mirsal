@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Conversation } from '../types/chat';
 import {
+  canSendDraft,
   filterAndSortConversations,
   formatCallDuration,
   getTotalUnreadCount,
@@ -78,4 +79,12 @@ test('formatCallDuration formats MM:SS cleanly', () => {
   assert.equal(formatCallDuration(0), '00:00');
   assert.equal(formatCallDuration(65), '01:05');
   assert.equal(formatCallDuration(612), '10:12');
+});
+
+test('canSendDraft: enabled only for non-blank text while nothing is being sent', () => {
+  assert.equal(canSendDraft('مرحبا', false), true);
+  assert.equal(canSendDraft('  hi  ', false), true);
+  assert.equal(canSendDraft('', false), false);
+  assert.equal(canSendDraft('   \n\t ', false), false);
+  assert.equal(canSendDraft('مرحبا', true), false);
 });

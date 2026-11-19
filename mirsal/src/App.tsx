@@ -8,7 +8,6 @@ import { SidebarNav } from './components/SidebarNav';
 import { ChatInfoModal, DevicesModal, NewChatModal, NotificationsModal } from './components/SideModals';
 import { AdminModal, ProfileModal, SupportModal, ThemeModal } from './components/DevModals';
 import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
-import { createApi } from './api/client';
 import type {
   ActiveCallState,
   Conversation,
@@ -168,8 +167,19 @@ export default function App() {
     setActiveCall(null);
   }, []);
 
-  const api = useMemo(
-    () => createApi({ getToken: () => tokenRef.current, onUnauthorized: clearSession }),
+  const api = useCallback(
+    async (path: string, init: RequestInit = {}): Promise<Response> => {
+      const res = await fetch(path, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : {}),
+          ...(init.headers as Record<string, string> | undefined),
+        },
+      });
+      if (res.status === 401 && tokenRef.current && !path.startsWith('/api/auth/')) clearSession();
+      return res;
+    },
     [clearSession]
   );
 
@@ -366,9 +376,9 @@ export default function App() {
   }, []);
 
   const sendMessageTo = useCallback(
-    async (convId: string, type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
+    async (convId: string, type: MessageType, payload: DecryptedMessagePayload) => {
       const user = currentUserRef.current;
-      if (!user) return false;
+      if (!user) return;
       const id = newMsgId();
       const createdAt = new Date().toISOString();
       const setStatus = (status: Message['status']) =>
@@ -383,8 +393,8 @@ export default function App() {
         const key = await getConversationKey(convId);
         ({ ciphertext, iv } = await encryptMessagePayload(payload, key));
       } catch {
-        // تعذّر التشفير (مفتاح المحادثة غير متاح): لا نُظهر رسالة وهمية، ويحتفظ الحقل بالنص ليعيد المستخدم المحاولة.
-        return false;
+        // No message was created, so tell the caller (the composer restores the draft).
+        throw new Error('encrypt-failed');
       }
 
       const optimistic: Message = {
@@ -404,47 +414,45 @@ export default function App() {
         prev.map((c) => (c.id === convId ? { ...c, updatedAt: createdAt, lastMessage: optimistic } : c))
       );
 
-      // الرسالة ظاهرة الآن (حالة «جارٍ الإرسال»)؛ التسليم للخادم يكمل في الخلفية دون حجب الواجهة.
-      void (async () => {
-        try {
-          const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
-            method: 'POST',
-            body: JSON.stringify({ id, type, ciphertext, iv }),
-          });
-          if (!res.ok) throw new Error(String(res.status));
-          const { message } = (await res.json()) as { message: Message };
-          // Never downgrade: the realtime echo may already have marked it delivered/read.
-          setMessagesByConv((prev) => ({
-            ...prev,
-            [convId]: (prev[convId] || []).map((m) =>
-              m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
-            ),
-          }));
-        } catch {
-          setStatus('failed');
-        }
-      })();
-      return true;
+      try {
+        const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ id, type, ciphertext, iv }),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const { message } = (await res.json()) as { message: Message };
+        // Never downgrade: the realtime echo may already have marked it delivered/read.
+        setMessagesByConv((prev) => ({
+          ...prev,
+          [convId]: (prev[convId] || []).map((m) =>
+            m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+          ),
+        }));
+      } catch {
+        setStatus('failed');
+      }
     },
     [api, getConversationKey]
   );
 
   const handleSendMessage = useCallback(
-    async (type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
-      if (!activeConvIdRef.current) return false;
-      return sendMessageTo(activeConvIdRef.current, type, payload);
+    async (type: MessageType, payload: DecryptedMessagePayload) => {
+      if (activeConvIdRef.current) await sendMessageTo(activeConvIdRef.current, type, payload);
     },
     [sendMessageTo]
   );
 
-  /** إعادة إرسال رسالة فشلت: نفس المعرّف، والخادم يتجاهل التكرار فلا تصل نسختان. */
-  const handleRetryMessage = useCallback(
-    async (msg: Message) => {
-      const convId = msg.conversationId;
+  /** Re-sends a message that failed on the network, reusing its stored ciphertext. */
+  const retryMessage = useCallback(
+    async (msgId: string) => {
+      const convId = activeConvIdRef.current;
+      if (!convId) return;
+      const msg = (messagesByConv[convId] || []).find((m) => m.id === msgId && m.status === 'failed');
+      if (!msg) return;
       const setStatus = (status: Message['status']) =>
         setMessagesByConv((prev) => ({
           ...prev,
-          [convId]: (prev[convId] || []).map((m) => (m.id === msg.id ? { ...m, status } : m)),
+          [convId]: (prev[convId] || []).map((m) => (m.id === msgId ? { ...m, status } : m)),
         }));
       setStatus('sending');
       try {
@@ -457,14 +465,14 @@ export default function App() {
         setMessagesByConv((prev) => ({
           ...prev,
           [convId]: (prev[convId] || []).map((m) =>
-            m.id === msg.id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            m.id === msgId && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
           ),
         }));
       } catch {
         setStatus('failed');
       }
     },
-    [api]
+    [api, messagesByConv]
   );
 
   /** Ends local call state; the caller's device writes the call record into the chat. */
@@ -484,6 +492,8 @@ export default function App() {
           callKind: call.kind,
           callOutcome: result,
           durationSec: duration,
+        }).catch(() => {
+          /* the call record is best-effort */
         });
       }
     },
@@ -987,7 +997,7 @@ export default function App() {
           typingUsers={activeConversationId ? typingByConv[activeConversationId] || [] : []}
           onBackMobile={() => setMobileView('list')}
           onSendMessage={handleSendMessage}
-          onRetryMessage={handleRetryMessage}
+          onRetry={retryMessage}
           onTyping={handleTyping}
           onStartCall={handleStartCall}
           onOpenChatInfo={() => setActiveModal('chat_info')}
@@ -1051,8 +1061,6 @@ export default function App() {
       {activeModal === 'profile' && (
         <ProfileModal
           user={currentUser}
-          api={api}
-          onUserChange={setCurrentUser}
           onClose={() => setActiveModal(null)}
           onOpenDevices={() => setActiveModal('devices')}
           onOpenSupport={() => setActiveModal('support')}
