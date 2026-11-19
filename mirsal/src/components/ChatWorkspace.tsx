@@ -1,22 +1,27 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
+  Ban,
   Check,
   CheckCheck,
   Clock,
+  Copy,
   Download,
   FileText,
   Info,
   Lock,
   Mic,
+  MoreVertical,
   Paperclip,
   Phone,
+  Pencil,
   PhoneCall,
   Reply,
   RotateCw,
   Send,
   Smile,
   Square,
+  Trash2,
   Users,
   Video,
   X,
@@ -33,6 +38,10 @@ interface ChatWorkspaceProps {
   /** تعيد true حين تُقبل الرسالة وتظهر في المحادثة، وfalse إن تعذّر تجهيزها (يبقى النص في الحقل). */
   onSendMessage: (type: MessageType, payload: DecryptedMessagePayload) => Promise<boolean>;
   onRetryMessage: (msg: Message) => void;
+  /** تعدّل نص رسالة؛ تعيد نص الخطأ أو null عند النجاح. */
+  onEditMessage: (msg: Message, text: string) => Promise<string | null>;
+  /** تحذف رسالة (لي أو للجميع)؛ تعيد نص الخطأ أو null عند النجاح. */
+  onDeleteMessage: (msg: Message, scope: 'me' | 'all') => Promise<string | null>;
   onTyping: (isTyping: boolean) => void;
   onStartCall: (kind: 'audio' | 'video') => void;
   onOpenChatInfo: () => void;
@@ -75,12 +84,18 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   onBackMobile,
   onSendMessage,
   onRetryMessage,
+  onEditMessage,
+  onDeleteMessage,
   onTyping,
   onStartCall,
   onOpenChatInfo,
 }) => {
   const [draft, setDraft] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [editing, setEditing] = useState<Message | null>(null);
+  const [menuMsg, setMenuMsg] = useState<Message | null>(null);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [menuBusy, setMenuBusy] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -102,6 +117,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   useEffect(() => {
     setMediaError(null);
     setReplyTo(null);
+    setEditing(null);
+    setMenuMsg(null);
     setShowEmojiPicker(false);
   }, [conversation?.id]);
 
@@ -160,6 +177,16 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     sendLockRef.current = true;
     setMediaError(null);
     try {
+      if (editing) {
+        const err = await onEditMessage(editing, text);
+        if (err) {
+          setMediaError(err);
+          return;
+        }
+        setEditing(null);
+        setDraft('');
+        return;
+      }
       const payload: DecryptedMessagePayload = { text };
       if (replyTo) {
         payload.replyToId = replyTo.id;
@@ -394,15 +421,31 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           const showDate = !prev || !isSameDay(prev.createdAt, msg.createdAt);
           const groupedWithPrev = !showDate && isGrouped(prev, msg);
 
+          const dateDivider = showDate && (
+            <div className="flex justify-center my-4">
+              <span className="date-chip px-3 py-1 rounded-full text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                {formatDayLabel(msg.createdAt)}
+              </span>
+            </div>
+          );
+
+          if (msg.deleted) {
+            return (
+              <React.Fragment key={msg.id}>
+                {dateDivider}
+                <div className={`flex flex-col ${isMine ? 'items-start' : 'items-end'} ${groupedWithPrev ? 'mt-0.5' : showDate ? '' : 'mt-3'}`}>
+                  <div className="msg-in max-w-[78%] rounded-[var(--radius-lg)] px-3.5 py-2 text-xs italic flex items-center gap-1.5 border border-dashed border-[var(--glass-border)] text-slate-500 dark:text-slate-400">
+                    <Ban className="w-3.5 h-3.5 shrink-0" />
+                    <span>تم حذف هذه الرسالة</span>
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          }
+
           return (
             <React.Fragment key={msg.id}>
-              {showDate && (
-                <div className="flex justify-center my-4">
-                  <span className="date-chip px-3 py-1 rounded-full text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                    {formatDayLabel(msg.createdAt)}
-                  </span>
-                </div>
-              )}
+              {dateDivider}
             <div
               className={`flex flex-col ${isMine ? 'items-start' : 'items-end'} ${groupedWithPrev ? 'mt-0.5' : showDate ? '' : 'mt-3'}`}
             >
@@ -512,12 +555,16 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                 >
                   <button
                     type="button"
-                    onClick={() => setReplyTo(msg)}
-                    aria-label="الرد على هذه الرسالة"
-                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:underline"
+                    onClick={() => {
+                      setConfirmAll(false);
+                      setMenuMsg(msg);
+                    }}
+                    aria-label="خيارات الرسالة"
+                    className="icon-btn !min-h-[28px] !min-w-[28px] -my-1 opacity-70 hover:opacity-100"
                   >
-                    <Reply className="w-3.5 h-3.5" />
+                    <MoreVertical className="w-4 h-4" />
                   </button>
+                  {msg.editedAt && <span>معدّلة</span>}
                   <span>{formatArabicTime(msg.createdAt)}</span>
                   {isMine && (
                     <span className="flex items-center gap-1">
@@ -572,6 +619,26 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           <div className="mb-2 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs text-red-700 dark:text-red-300 flex items-center justify-between">
             <span>{mediaError}</span>
             <button type="button" onClick={() => setMediaError(null)} aria-label="إغلاق التنبيه">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {editing && (
+          <div className="mb-2 px-3 py-2 rounded-xl bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] flex items-center justify-between gap-2 text-xs">
+            <div className="min-w-0 truncate text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+              <Pencil className="w-3.5 h-3.5 shrink-0" />
+              <span>تعديل الرسالة</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(null);
+                setDraft('');
+              }}
+              aria-label="إلغاء التعديل"
+              className="icon-btn !min-h-[28px] !min-w-[28px]"
+            >
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -719,6 +786,113 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           />
         </div>
       )}
+      {menuMsg && (() => {
+        const m = menuMsg;
+        const mine = m.senderId === currentUserId;
+        const age = Date.now() - new Date(m.createdAt).getTime();
+        const canEdit = mine && m.type === 'text' && age <= 15 * 60_000;
+        const canDeleteAll = mine && age <= 48 * 3_600_000;
+        const text = m.decrypted?.text;
+        const close = () => {
+          setMenuMsg(null);
+          setConfirmAll(false);
+        };
+        const run = async (scope: 'me' | 'all') => {
+          setMenuBusy(true);
+          const err = await onDeleteMessage(m, scope);
+          setMenuBusy(false);
+          if (err) setMediaError(err);
+          close();
+        };
+        const item = 'btn-glass btn-ghost w-full min-h-[48px] px-4 rounded-xl text-sm font-semibold flex items-center gap-3 justify-start';
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="خيارات الرسالة"
+            className="modal-backdrop fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center"
+            onClick={close}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="modal-card w-full sm:max-w-sm bg-white dark:bg-[var(--d-surface)] rounded-t-[var(--radius-xl)] sm:rounded-[var(--radius-xl)] border border-[var(--glass-border)] p-3 space-y-2"
+              style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
+            >
+              {confirmAll ? (
+                <>
+                  <p className="px-2 py-2 text-sm text-slate-800 dark:text-slate-100 leading-relaxed">
+                    سيُمسح محتوى هذه الرسالة عند جميع الأعضاء ولا يمكن التراجع عن ذلك. هل تريد المتابعة؟
+                  </p>
+                  <button type="button" disabled={menuBusy} onClick={() => run('all')} className="btn-glass btn-danger w-full min-h-[48px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
+                    <Trash2 className="w-4 h-4" />
+                    <span>{menuBusy ? 'جارٍ الحذف...' : 'نعم، احذف للجميع'}</span>
+                  </button>
+                  <button type="button" onClick={() => setConfirmAll(false)} className="btn-glass btn-ghost w-full min-h-[48px] rounded-xl text-sm font-semibold">
+                    رجوع
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className={item}
+                    onClick={() => {
+                      setEditing(null);
+                      setReplyTo(m);
+                      close();
+                    }}
+                  >
+                    <Reply className="w-4 h-4" />
+                    <span>رد</span>
+                  </button>
+                  {text && (
+                    <button
+                      type="button"
+                      className={item}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(text);
+                        } catch {
+                          setMediaError('تعذر النسخ، انسخ النص يدوياً');
+                        }
+                        close();
+                      }}
+                    >
+                      <Copy className="w-4 h-4" />
+                      <span>نسخ النص</span>
+                    </button>
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className={item}
+                      onClick={() => {
+                        setReplyTo(null);
+                        setEditing(m);
+                        setDraft(text ?? '');
+                        close();
+                      }}
+                    >
+                      <Pencil className="w-4 h-4" />
+                      <span>تعديل</span>
+                    </button>
+                  )}
+                  <button type="button" disabled={menuBusy} className={item} onClick={() => run('me')}>
+                    <Trash2 className="w-4 h-4" />
+                    <span>حذف لي فقط</span>
+                  </button>
+                  {canDeleteAll && (
+                    <button type="button" className="btn-glass btn-danger w-full min-h-[48px] px-4 rounded-xl text-sm font-semibold flex items-center gap-3 justify-start" onClick={() => setConfirmAll(true)}>
+                      <Trash2 className="w-4 h-4" />
+                      <span>حذف للجميع</span>
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </main>
   );
 };

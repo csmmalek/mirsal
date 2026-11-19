@@ -322,10 +322,11 @@ const listMessages: Handler = async ({ env, auth, params, url }) => {
        SELECT m.*, u.display_name AS sender_name FROM messages m
        LEFT JOIN users u ON u.id = m.sender_id
        WHERE m.conversation_id = ? ${before ? 'AND m.created_at < ?' : ''}
+         AND m.id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
        ORDER BY m.created_at DESC LIMIT ?
      ) ORDER BY created_at ASC`
   )
-    .bind(...(before ? [convId, before, limit] : [convId, limit]))
+    .bind(...(before ? [convId, before, a.userId, limit] : [convId, a.userId, limit]))
     .all<Record<string, unknown>>();
   return json({ messages: results.map(mapMessage) });
 };
@@ -435,6 +436,73 @@ const sendMessage: Handler = async ({ req, env, auth, params }) => {
   ]);
 
   return json({ message });
+};
+
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+const DELETE_ALL_WINDOW_MS = 48 * 3_600_000;
+
+async function loadMessageForMember(env: Env, messageId: string, userId: string): Promise<Record<string, unknown>> {
+  const row = await env.DB.prepare(
+    'SELECT m.*, u.display_name AS sender_name FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.id = ?'
+  )
+    .bind(messageId)
+    .first<Record<string, unknown>>();
+  if (!row || !(await isMember(env.DB, String(row.conversation_id), userId))) throw new HttpError(404, 'الرسالة غير موجودة');
+  return row;
+}
+
+const editMessage: Handler = async ({ req, env, auth, params }) => {
+  const a = requireAuth(auth);
+  const row = await loadMessageForMember(env, params[0], a.userId);
+  if (String(row.sender_id) !== a.userId) throw new HttpError(403, 'يمكنك تعديل رسائلك فقط');
+  if (row.deleted_at) throw new HttpError(409, 'هذه الرسالة محذوفة');
+  if (String(row.type) !== 'text') throw new HttpError(400, 'يمكن تعديل الرسائل النصية فقط');
+  if (Date.now() - Date.parse(String(row.created_at)) > EDIT_WINDOW_MS) {
+    throw new HttpError(403, 'انتهت مهلة التعديل (15 دقيقة من الإرسال)');
+  }
+  const b = await readJson(req);
+  const ciphertext = str(b.ciphertext, MAX_CIPHERTEXT + 1);
+  const iv = str(b.iv, 40);
+  if (ciphertext.length > MAX_CIPHERTEXT) throw new HttpError(413, 'الرسالة كبيرة جداً');
+  if (!ciphertext || !B64_RE.test(ciphertext)) throw new HttpError(400, 'نص التشفير غير صالح');
+  if (!iv || !B64_RE.test(iv)) throw new HttpError(400, 'متجه التشفير غير صالح');
+
+  const editedAt = nowIso();
+  await env.DB.prepare('UPDATE messages SET ciphertext = ?, iv = ?, edited_at = ? WHERE id = ?')
+    .bind(ciphertext, iv, editedAt, params[0])
+    .run();
+  const message = mapMessage({ ...row, ciphertext, iv, edited_at: editedAt });
+  const memberIds = await getMemberIds(env.DB, String(row.conversation_id));
+  await broadcast(env, [{ userIds: memberIds, payload: { type: 'message:edited', message } }]);
+  return json({ message });
+};
+
+const deleteMessage: Handler = async ({ env, auth, params, url }) => {
+  const a = requireAuth(auth);
+  const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'me';
+  const row = await loadMessageForMember(env, params[0], a.userId);
+  const convId = String(row.conversation_id);
+
+  if (scope === 'me') {
+    await env.DB.prepare('INSERT OR IGNORE INTO message_hidden (message_id, user_id, hidden_at) VALUES (?, ?, ?)')
+      .bind(params[0], a.userId, nowIso())
+      .run();
+    await broadcast(env, [{ userIds: [a.userId], payload: { type: 'message:hidden', conversationId: convId, messageId: params[0] } }]);
+    return json({ ok: true, scope });
+  }
+
+  if (String(row.sender_id) !== a.userId) throw new HttpError(403, 'يمكنك الحذف للجميع لرسائلك فقط');
+  if (!row.deleted_at) {
+    if (Date.now() - Date.parse(String(row.created_at)) > DELETE_ALL_WINDOW_MS) {
+      throw new HttpError(403, 'انتهت مهلة الحذف للجميع (48 ساعة من الإرسال)');
+    }
+    await env.DB.prepare("UPDATE messages SET deleted_at = ?, ciphertext = '', iv = '' WHERE id = ?")
+      .bind(nowIso(), params[0])
+      .run();
+  }
+  const memberIds = await getMemberIds(env.DB, convId);
+  await broadcast(env, [{ userIds: memberIds, payload: { type: 'message:deleted', conversationId: convId, messageId: params[0] } }]);
+  return json({ ok: true, scope });
 };
 
 const markRead: Handler = async ({ env, auth, params }) => {
@@ -788,6 +856,8 @@ const routes: Route[] = [
   { method: 'GET', pattern: /^\/api\/conversations$/, handler: listConversations },
   { method: 'POST', pattern: /^\/api\/conversations$/, handler: createConversation },
   { method: 'GET', pattern: /^\/api\/conversations\/([\w-]+)$/, handler: getConversation },
+  { method: 'PATCH', pattern: /^\/api\/messages\/([\w-]+)$/, handler: editMessage },
+  { method: 'DELETE', pattern: /^\/api\/messages\/([\w-]+)$/, handler: deleteMessage },
   { method: 'GET', pattern: /^\/api\/conversations\/([\w-]+)\/messages$/, handler: listMessages },
   { method: 'POST', pattern: /^\/api\/conversations\/([\w-]+)\/messages$/, handler: sendMessage },
   { method: 'POST', pattern: /^\/api\/conversations\/([\w-]+)\/read$/, handler: markRead },

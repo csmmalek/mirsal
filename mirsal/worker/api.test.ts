@@ -273,3 +273,55 @@ test('public settings are readable; admin settings require admin', async () => {
   assert.equal((await call('PUT', '/api/admin/settings', { maintenance: true })).status, 401);
   assert.equal((await call('GET', '/api/admin/audit')).status, 401);
 });
+
+test('message edit and delete: sender-only edit, windows, delete for me and for everyone', async () => {
+  const a = (await call('POST', '/api/auth/register', reg('edit-a@test.dev'))).data;
+  const b = (await call('POST', '/api/auth/register', reg('edit-b@test.dev'))).data;
+  const keys = [a.user.id, b.user.id].map((userId) => ({ userId, wrappedKey: 'QUJD'.repeat(12), iv: 'AAAAAAAAAAAAAAAA' }));
+  const conv = await call('POST', '/api/conversations', { memberIds: [b.user.id], keys }, a.token);
+  const convId = conv.data.conversation.id;
+  const body = (id: string) => ({ id, type: 'text', ciphertext: 'QUJD'.repeat(8), iv: 'AAAAAAAAAAAAAAAA' });
+  const text2 = { ciphertext: 'REVG'.repeat(8), iv: 'BBBBBBBBBBBBBBBB' };
+
+  assert.equal((await call('POST', `/api/conversations/${convId}/messages`, body('msg_edit_000001'), a.token)).status, 200);
+  assert.equal((await call('POST', `/api/conversations/${convId}/messages`, body('msg_edit_000002'), a.token)).status, 200);
+  assert.equal((await call('POST', `/api/conversations/${convId}/messages`, body('msg_edit_000003'), a.token)).status, 200);
+
+  // Edit: only the sender, only valid ciphertext, marks editedAt.
+  assert.equal((await call('PATCH', '/api/messages/msg_edit_000001', text2)).status, 401);
+  assert.equal((await call('PATCH', '/api/messages/msg_edit_000001', text2, b.token)).status, 403);
+  assert.equal((await call('PATCH', '/api/messages/msg_edit_000001', { ciphertext: 'bad!!', iv: 'BBBB' }, a.token)).status, 400);
+  const edited = await call('PATCH', '/api/messages/msg_edit_000001', text2, a.token);
+  assert.equal(edited.status, 200);
+  assert.equal(edited.data.message.ciphertext, text2.ciphertext);
+  assert.ok(edited.data.message.editedAt);
+  assert.equal((await call('PATCH', '/api/messages/msg_missing_0001', text2, a.token)).status, 404);
+
+  // Edit window (15 min): back-date the message.
+  const old = new Date(Date.now() - 20 * 60_000).toISOString();
+  await env.DB.prepare('UPDATE messages SET created_at = ? WHERE id = ?').bind(old, 'msg_edit_000002').run();
+  assert.equal((await call('PATCH', '/api/messages/msg_edit_000002', text2, a.token)).status, 403);
+
+  // Delete for me: hidden for b only.
+  assert.equal((await call('DELETE', '/api/messages/msg_edit_000001?scope=me', undefined, b.token)).status, 200);
+  const bList = await call('GET', `/api/conversations/${convId}/messages`, undefined, b.token);
+  assert.ok(!bList.data.messages.some((m: any) => m.id === 'msg_edit_000001'));
+  const aList = await call('GET', `/api/conversations/${convId}/messages`, undefined, a.token);
+  assert.ok(aList.data.messages.some((m: any) => m.id === 'msg_edit_000001'));
+
+  // Delete for everyone: sender only; ciphertext wiped, placeholder remains for both.
+  assert.equal((await call('DELETE', '/api/messages/msg_edit_000003?scope=all', undefined, b.token)).status, 403);
+  assert.equal((await call('DELETE', '/api/messages/msg_edit_000003?scope=all', undefined, a.token)).status, 200);
+  const after = await call('GET', `/api/conversations/${convId}/messages`, undefined, b.token);
+  const gone = after.data.messages.find((m: any) => m.id === 'msg_edit_000003');
+  assert.equal(gone.deleted, true);
+  assert.equal(gone.ciphertext, '');
+  assert.equal((await call('PATCH', '/api/messages/msg_edit_000003', text2, a.token)).status, 409);
+  // Idempotent.
+  assert.equal((await call('DELETE', '/api/messages/msg_edit_000003?scope=all', undefined, a.token)).status, 200);
+
+  // Delete-for-everyone window (48 h).
+  const veryOld = new Date(Date.now() - 49 * 3_600_000).toISOString();
+  await env.DB.prepare('UPDATE messages SET created_at = ? WHERE id = ?').bind(veryOld, 'msg_edit_000002').run();
+  assert.equal((await call('DELETE', '/api/messages/msg_edit_000002?scope=all', undefined, a.token)).status, 403);
+});

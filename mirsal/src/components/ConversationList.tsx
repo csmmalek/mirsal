@@ -58,6 +58,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
 
     const isMine = msg.senderId === currentUserId;
     const prefix = conv.type === 'group' && !isMine && msg.senderName ? `${msg.senderName}: ` : '';
+    if (msg.deleted) {
+      return <span className="italic text-slate-400 dark:text-slate-500">تم حذف هذه الرسالة</span>;
+    }
 
     let content: React.ReactNode = msg.decrypted?.text || 'رسالة مشفرة';
     if (msg.type === 'image') {

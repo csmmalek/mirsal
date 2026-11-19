@@ -8,7 +8,7 @@ import { SidebarNav } from './components/SidebarNav';
 import { ChatInfoModal, DevicesModal, NewChatModal, NotificationsModal } from './components/SideModals';
 import { AdminModal, ProfileModal, SupportModal, ThemeModal } from './components/DevModals';
 import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
-import { createApi } from './api/client';
+import { createApi, errorMessage, readError } from './api/client';
 import { SettingsModal } from './components/SettingsModal';
 import { PublicSettings, StatusBanner } from './components/StatusBanner';
 import { ThemeMode } from './preferences';
@@ -251,6 +251,7 @@ export default function App() {
 
   const decryptMessage = useCallback(
     async (msg: Message): Promise<Message> => {
+      if (msg.deleted) return { ...msg, decrypted: { text: '' } };
       try {
         const key = await getConversationKey(msg.conversationId);
         return { ...msg, decrypted: await decryptMessagePayload(msg.ciphertext, msg.iv, key) };
@@ -490,6 +491,61 @@ export default function App() {
       return sendMessageTo(activeConvIdRef.current, type, payload);
     },
     [sendMessageTo]
+  );
+
+  /** تحديث رسالة في الحالة المحلية وفي معاينة المحادثة إن كانت آخر رسالة. */
+  const patchMessage = useCallback((convId: string, messageId: string, patch: (m: Message) => Message) => {
+    setMessagesByConv((prev) => ({
+      ...prev,
+      [convId]: (prev[convId] || []).map((m) => (m.id === messageId ? patch(m) : m)),
+    }));
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convId && c.lastMessage?.id === messageId ? { ...c, lastMessage: patch(c.lastMessage) } : c))
+    );
+  }, []);
+
+  /** تعديل نص رسالة: يُعاد تشفيرها بالمفتاح نفسه، وتبقى بيانات الرد كما هي. */
+  const handleEditMessage = useCallback(
+    async (msg: Message, newText: string): Promise<string | null> => {
+      const text = newText.trim();
+      if (!text) return 'لا يمكن أن تكون الرسالة فارغة';
+      try {
+        const key = await getConversationKey(msg.conversationId);
+        const payload: DecryptedMessagePayload = { ...(msg.decrypted ?? {}), text };
+        const { ciphertext, iv } = await encryptMessagePayload(payload, key);
+        const res = await api(`/api/messages/${encodeURIComponent(msg.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ ciphertext, iv }),
+        });
+        if (!res.ok) return await readError(res, 'تعذر تعديل الرسالة');
+        const { message } = (await res.json()) as { message: Message };
+        patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, ciphertext, iv, editedAt: message.editedAt, decrypted: payload }));
+        return null;
+      } catch (err) {
+        return errorMessage(err, 'تعذر تعديل الرسالة');
+      }
+    },
+    [api, getConversationKey, patchMessage]
+  );
+
+  /** حذف رسالة: «لي» يخفيها عندي فقط، و«للجميع» يمسح محتواها عند الجميع. يعيد نص الخطأ أو null. */
+  const handleDeleteMessage = useCallback(
+    async (msg: Message, scope: 'me' | 'all'): Promise<string | null> => {
+      try {
+        const res = await api(`/api/messages/${encodeURIComponent(msg.id)}?scope=${scope}`, { method: 'DELETE' });
+        if (!res.ok) return await readError(res, 'تعذر حذف الرسالة');
+        if (scope === 'me') {
+          setMessagesByConv((prev) => ({ ...prev, [msg.conversationId]: (prev[msg.conversationId] || []).filter((m) => m.id !== msg.id) }));
+          patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, deleted: true, decrypted: { text: '' } }));
+        } else {
+          patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, deleted: true, ciphertext: '', iv: '', decrypted: { text: '' } }));
+        }
+        return null;
+      } catch (err) {
+        return errorMessage(err, 'تعذر حذف الرسالة');
+      }
+    },
+    [api, patchMessage]
   );
 
   /** إعادة إرسال رسالة فشلت: نفس المعرّف، والخادم يتجاهل التكرار فلا تصل نسختان. */
@@ -796,6 +852,27 @@ export default function App() {
           return;
         }
 
+        if (evType === 'message:edited') {
+          const raw = data.message as Message;
+          if (!raw) return;
+          const dec = await decryptMessage(raw);
+          patchMessage(dec.conversationId, dec.id, (m) => ({ ...m, ciphertext: dec.ciphertext, iv: dec.iv, editedAt: dec.editedAt, decrypted: dec.decrypted }));
+          return;
+        }
+        if (evType === 'message:deleted') {
+          const convId = String(data.conversationId || '');
+          const id = String(data.messageId || '');
+          patchMessage(convId, id, (m) => ({ ...m, deleted: true, ciphertext: '', iv: '', decrypted: { text: '' } }));
+          return;
+        }
+        if (evType === 'message:hidden') {
+          const convId = String(data.conversationId || '');
+          const id = String(data.messageId || '');
+          setMessagesByConv((prev) => ({ ...prev, [convId]: (prev[convId] || []).filter((m) => m.id !== id) }));
+          patchMessage(convId, id, (m) => ({ ...m, deleted: true, decrypted: { text: '' } }));
+          return;
+        }
+
         if (evType === 'message:read_receipt') {
           const convId = String(data.conversationId || '');
           if (String(data.readerId) !== me.id) {
@@ -920,7 +997,7 @@ export default function App() {
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
       wsRef.current?.close();
     };
-  }, [currentUser?.id, api, clearSession, cleanupWebRtc, decryptMessage, loadMessagesForConversation, loadWorkspaceData, wsSend]);
+  }, [currentUser?.id, api, clearSession, cleanupWebRtc, decryptMessage, patchMessage, loadMessagesForConversation, loadWorkspaceData, wsSend]);
 
   const handleTyping = useCallback(
     (isTyping: boolean) => {
@@ -1045,6 +1122,8 @@ export default function App() {
           onBackMobile={() => setMobileView('list')}
           onSendMessage={handleSendMessage}
           onRetryMessage={handleRetryMessage}
+          onEditMessage={handleEditMessage}
+          onDeleteMessage={handleDeleteMessage}
           onTyping={handleTyping}
           onStartCall={handleStartCall}
           onOpenChatInfo={() => setActiveModal('chat_info')}

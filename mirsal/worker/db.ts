@@ -48,6 +48,8 @@ export function mapMessage(row: Row): Message {
     iv: String(row.iv),
     status: String(row.status) as DeliveryStatus,
     createdAt: String(row.created_at),
+    editedAt: row.edited_at ? String(row.edited_at) : undefined,
+    deleted: row.deleted_at || row.hidden_for_me ? true : undefined,
   };
 }
 
@@ -106,15 +108,17 @@ export async function getConversationsForUser(
       `SELECT c.*, cm.unread_count, cm.wrapped_key, cm.wrap_iv, cm.wrapped_by,
               m.id AS m_id, m.conversation_id AS m_conversation_id, m.sender_id AS m_sender_id,
               m.type AS m_type, m.ciphertext AS m_ciphertext, m.iv AS m_iv, m.status AS m_status,
-              m.created_at AS m_created_at, mu.display_name AS m_sender_name
+              m.created_at AS m_created_at, m.edited_at AS m_edited_at, m.deleted_at AS m_deleted_at,
+              mu.display_name AS m_sender_name, h.user_id AS m_hidden
        FROM conversations c
        JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = ?
        LEFT JOIN messages m ON m.id = c.last_message_id
        LEFT JOIN users mu ON mu.id = m.sender_id
+       LEFT JOIN message_hidden h ON h.message_id = m.id AND h.user_id = ?
        WHERE 1 = 1 ${filter}
        ORDER BY c.updated_at DESC`
     )
-    .bind(...(onlyId ? [userId, onlyId] : [userId]));
+    .bind(...(onlyId ? [userId, userId, onlyId] : [userId, userId]));
   const { results: convRows } = await convStmt.all<Row>();
   if (convRows.length === 0) return [];
 
@@ -163,6 +167,9 @@ export async function getConversationsForUser(
             iv: c.m_iv,
             status: c.m_status,
             created_at: c.m_created_at,
+            edited_at: c.m_edited_at,
+            deleted_at: c.m_deleted_at,
+            hidden_for_me: c.m_hidden,
           })
         : undefined,
       keyInfo: {
