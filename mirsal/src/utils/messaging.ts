@@ -84,7 +84,29 @@ export function formatCallDuration(totalSeconds: number): string {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-/** The send button is enabled only for non-blank text while no send is in flight. */
-export function canSendDraft(draft: string, sending: boolean): boolean {
-  return !sending && draft.trim().length > 0;
+export function isSameDay(a: string, b: string): boolean {
+  const x = new Date(a);
+  const y = new Date(b);
+  if (Number.isNaN(x.getTime()) || Number.isNaN(y.getTime())) return false;
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
+/** Label for the date divider between days: اليوم / أمس / full date. */
+export function formatDayLabel(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  if (isSameDay(iso, now.toISOString())) return 'اليوم';
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (isSameDay(iso, yesterday.toISOString())) return 'أمس';
+  return d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/** True when two messages belong to one visual group (same sender, same day, under 5 minutes apart). */
+export function isGrouped(
+  prev: { senderId: string; createdAt: string } | undefined,
+  cur: { senderId: string; createdAt: string }
+): boolean {
+  if (!prev || prev.senderId !== cur.senderId || !isSameDay(prev.createdAt, cur.createdAt)) return false;
+  return Math.abs(new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 5 * 60 * 1000;
 }

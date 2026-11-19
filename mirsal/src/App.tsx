@@ -10,6 +10,7 @@ import { AdminModal, ProfileModal, SupportModal, ThemeModal } from './components
 import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
 import { createApi } from './api/client';
 import { SettingsModal } from './components/SettingsModal';
+import { PublicSettings, StatusBanner } from './components/StatusBanner';
 import { ThemeMode } from './preferences';
 import type {
   ActiveCallState,
@@ -173,6 +174,25 @@ export default function App() {
     applyTheme(colorTheme);
     localStorage.setItem(LS.color, colorTheme);
   }, [colorTheme]);
+
+  const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/settings');
+        if (res.ok && alive) setPublicSettings((await res.json()) as PublicSettings);
+      } catch {
+        /* offline: keep the last known settings */
+      }
+    };
+    void load();
+    const t = window.setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+    };
+  }, []);
 
   /** ثيم «فاتح» (مثل لؤلؤ) يفرض الوضع الفاتح؛ غيره يترك الوضع كما اختاره المستخدم. */
   const pickColorTheme = useCallback(
@@ -967,7 +987,8 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden flex bg-[#F4F6F8] dark:bg-[var(--d-bg)] text-slate-900 dark:text-slate-100">
+    <div className="app-shell w-full overflow-hidden flex bg-[#F4F6F8] dark:bg-[var(--d-bg)] text-slate-900 dark:text-slate-100">
+      <StatusBanner settings={publicSettings} />
       {/* Navigation Rail (Right side in RTL) */}
       <SidebarNav
         currentUser={currentUser}

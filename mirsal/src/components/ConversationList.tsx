@@ -131,7 +131,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             type="button"
             onClick={onToggleTheme}
             aria-label={darkMode ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}
-            className="md:hidden min-h-[44px] min-w-[44px] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors"
+            className="icon-btn md:hidden flex items-center justify-center transition-colors"
           >
             {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
@@ -162,12 +162,18 @@ export const ConversationList: React.FC<ConversationListProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-[var(--d-bg)] rounded-xl" role="tablist" aria-label="تصفية المحادثات">
+        <div
+          className="tabs-slider flex items-center p-1 rounded-xl bg-slate-100 dark:bg-white/5 border border-[var(--glass-border)]"
+          role="tablist"
+          aria-label="تصفية المحادثات"
+          style={{ ['--tabs' as string]: 3, ['--tab-index' as string]: ['all', 'groups', 'unread'].indexOf(filter) } as React.CSSProperties}
+        >
+          <span className="tab-pill" aria-hidden="true" />
           {(
             [
               { id: 'all', label: 'الكل' },
-              { id: 'unread', label: 'غير مقروءة' },
               { id: 'groups', label: 'المجموعات' },
+              { id: 'unread', label: 'غير مقروءة' },
             ] as const
           ).map((tab) => (
             <button
@@ -176,10 +182,10 @@ export const ConversationList: React.FC<ConversationListProps> = ({
               role="tab"
               aria-selected={filter === tab.id}
               onClick={() => onFilterChange(tab.id)}
-              className={`flex-1 min-h-[36px] px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+              className={`relative z-10 flex-1 min-h-[40px] px-2.5 py-1.5 text-xs rounded-lg whitespace-nowrap transition-colors ${
                 filter === tab.id
-                  ? 'bg-white dark:bg-[var(--d-surface2)] text-slate-900 dark:text-white shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  ? 'font-bold text-slate-900 dark:text-white'
+                  : 'font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
               {tab.label}
@@ -201,7 +207,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             <button
               type="button"
               onClick={onOpenNewChat}
-              className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              className="btn-glass btn-ghost min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
             >
               بدء محادثة جديدة
             </button>
@@ -222,8 +228,8 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                 onClick={() => onSelectConversation(conv.id)}
                 className={`w-full min-h-[72px] px-4 py-3 flex items-center gap-3 text-right transition-colors ${
                   isActive
-                    ? 'bg-emerald-50/70 dark:bg-emerald-950/30'
-                    : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                    ? 'bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] border-r-4 border-[var(--accent)]'
+                    : 'hover:bg-[var(--glass-bg)]'
                 }`}
               >
                 <div className="relative shrink-0">
@@ -262,7 +268,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                       {renderPreview(conv)}
                     </div>
                     {conv.unreadCount > 0 && (
-                      <span className="min-w-[20px] h-5 px-1.5 rounded-md bg-[var(--accent)] text-white text-[11px] font-semibold tabular-nums flex items-center justify-center shrink-0">
+                      <span key={conv.unreadCount} className="badge-pop min-w-[22px] h-[22px] px-1.5 rounded-full bg-[var(--accent)] text-[var(--on-accent)] text-[11px] font-bold tabular-nums flex items-center justify-center shrink-0 shadow-[var(--glow)]">
                         {conv.unreadCount}
                       </span>
                     )}

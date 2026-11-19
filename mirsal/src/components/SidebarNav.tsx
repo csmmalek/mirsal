@@ -47,8 +47,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
   onLogout,
   mobileHidden,
 }) => {
-  const railBtn =
-    'min-h-[44px] min-w-[44px] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors';
+  const railBtn = 'icon-btn text-slate-600 dark:text-slate-300';
   return (
     <>
       {/* Desktop Vertical Rail */}
@@ -158,7 +157,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
       {!mobileHidden && (
         <nav
           aria-label="شريط التنقل للجوال"
-          className="md:hidden fixed bottom-0 left-0 right-0 z-30 h-16 bg-white/95 dark:bg-[var(--d-surface)]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-4 items-center px-2"
+          className="mobile-nav md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[var(--glass-bg-strong)] backdrop-blur-xl border-t border-[var(--glass-border)] grid grid-cols-4 items-center px-2"
         >
           <button
             type="button"
@@ -184,12 +183,12 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
           <button
             type="button"
-            onClick={onOpenThemes}
-            aria-label="الثيمات"
+            onClick={onOpenSettings}
+            aria-label="الإعدادات"
             className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-600 dark:text-slate-300"
           >
-            <Palette className="w-5 h-5" />
-            <span className="text-[10px] font-medium">الثيم</span>
+            <Settings className="w-5 h-5" />
+            <span className="text-[10px] font-medium">الإعدادات</span>
           </button>
 
 

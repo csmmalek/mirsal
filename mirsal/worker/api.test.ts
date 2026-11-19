@@ -263,3 +263,13 @@ test('profile photo: upload, validation, removal and fallback avatar', async () 
   assert.equal(del.status, 200);
   assert.match(del.data.user.avatar, /^data:image\/svg\+xml/);
 });
+
+test('public settings are readable; admin settings require admin', async () => {
+  const pub = await call('GET', '/api/settings');
+  assert.equal(pub.status, 200);
+  assert.equal(pub.data.registrationOpen, true);
+  assert.equal(pub.data.maintenance, false);
+  assert.equal(pub.data.announcement, '');
+  assert.equal((await call('PUT', '/api/admin/settings', { maintenance: true })).status, 401);
+  assert.equal((await call('GET', '/api/admin/audit')).status, 401);
+});

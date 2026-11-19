@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Conversation } from '../types/chat';
 import {
-  canSendDraft,
   filterAndSortConversations,
   formatCallDuration,
+  formatDayLabel,
+  isGrouped,
+  isSameDay,
   getTotalUnreadCount,
 } from './messaging';
 
@@ -81,10 +83,19 @@ test('formatCallDuration formats MM:SS cleanly', () => {
   assert.equal(formatCallDuration(612), '10:12');
 });
 
-test('canSendDraft: enabled only for non-blank text while nothing is being sent', () => {
-  assert.equal(canSendDraft('مرحبا', false), true);
-  assert.equal(canSendDraft('  hi  ', false), true);
-  assert.equal(canSendDraft('', false), false);
-  assert.equal(canSendDraft('   \n\t ', false), false);
-  assert.equal(canSendDraft('مرحبا', true), false);
+test('day labels: today, yesterday and full dates', () => {
+  const now = new Date('2026-11-19T12:00:00');
+  assert.equal(formatDayLabel('2026-11-19T01:00:00', now), 'اليوم');
+  assert.equal(formatDayLabel('2026-11-18T23:00:00', now), 'أمس');
+  assert.notEqual(formatDayLabel('2026-10-01T10:00:00', now), 'اليوم');
+  assert.equal(isSameDay('2026-11-19T01:00:00', '2026-11-19T23:00:00'), true);
+  assert.equal(isSameDay('2026-11-18T23:59:00', '2026-11-19T00:01:00'), false);
+});
+
+test('message grouping needs same sender, same day and under five minutes', () => {
+  const a = { senderId: 'u1', createdAt: '2026-11-19T10:00:00' };
+  assert.equal(isGrouped(undefined, a), false);
+  assert.equal(isGrouped(a, { senderId: 'u1', createdAt: '2026-11-19T10:04:00' }), true);
+  assert.equal(isGrouped(a, { senderId: 'u1', createdAt: '2026-11-19T10:06:00' }), false);
+  assert.equal(isGrouped(a, { senderId: 'u2', createdAt: '2026-11-19T10:01:00' }), false);
 });

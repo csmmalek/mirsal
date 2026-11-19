@@ -21,6 +21,7 @@ import { broadcast, getOnlineUserIds, revokeDevice } from './realtime';
 import { ensureSchema, newUid } from './schema';
 import { isAdminEmail } from './admin';
 import { readWallpapers, sanitizeWallpapers, writeWallpapers } from './appearance';
+import { listAudit, readSettings, sanitizeSettings, writeAudit, writeSettings } from './settings';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
 
 interface Ctx {
@@ -59,6 +60,7 @@ function requireB64(v: unknown, label: string, max: number): string {
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
 
 const register: Handler = async ({ req, env }) => {
+  if (!(await readSettings(env)).registrationOpen) throw new HttpError(403, 'التسجيل مغلق حالياً');
   const b = await readJson(req);
   const email = str(b.email, 120).trim().toLowerCase();
   if (!EMAIL_RE.test(email)) throw new HttpError(400, 'يرجى إدخال بريد إلكتروني صحيح');
@@ -179,6 +181,33 @@ const deleteAvatar: Handler = async ({ env, auth }) => {
   const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(a.userId).first<Record<string, unknown>>();
   if (!row) throw new HttpError(401, 'الحساب غير موجود');
   return json({ user: mapUser(row, await getOnlineUserIds(env), true) });
+};
+
+
+const getPublicSettings: Handler = async ({ env }) => {
+  const s = await readSettings(env);
+  return json({ registrationOpen: s.registrationOpen, announcement: s.announcement, maintenance: s.maintenance });
+};
+
+const adminGetSettings: Handler = async ({ env, auth }) => {
+  await requireAdmin(env, auth);
+  return json({ settings: await readSettings(env) });
+};
+
+const adminPutSettings: Handler = async ({ req, env, auth }) => {
+  const a = await requireAdmin(env, auth);
+  const current = await readSettings(env);
+  const next = sanitizeSettings(await readJson(req), current);
+  await writeSettings(env, next);
+  const changed = (Object.keys(next) as (keyof typeof next)[]).filter((k) => next[k] !== current[k]);
+  if (changed.length) await writeAudit(env, a.userId, 'settings.update', null, changed.join(','));
+  return json({ settings: next });
+};
+
+const adminListAudit: Handler = async ({ env, auth, url }) => {
+  await requireAdmin(env, auth);
+  const limit = Number(new URL(url).searchParams.get('limit') ?? 100);
+  return json({ entries: await listAudit(env, limit) });
 };
 
 /* ------------------------------ Users ------------------------------ */
@@ -318,6 +347,7 @@ function notificationSummary(type: string): string {
 
 const sendMessage: Handler = async ({ req, env, auth, params }) => {
   const a = requireAuth(auth);
+  if ((await readSettings(env)).maintenance) throw new HttpError(503, 'التطبيق في وضع الصيانة، حاول لاحقاً');
   const convId = params[0];
   const b = await readJson(req);
   const id = str(b.id, 60);
@@ -641,7 +671,7 @@ const adminListUsers: Handler = async ({ env, auth, url }) => {
 };
 
 const adminPatchUser: Handler = async ({ req, env, auth, params }) => {
-  await requireAdmin(env, auth);
+  const actor = await requireAdmin(env, auth);
   const target = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(params[0]).first<Record<string, unknown>>();
   if (!target) throw new HttpError(404, 'الحساب غير موجود');
   const b = await readJson(req);
@@ -670,6 +700,15 @@ const adminPatchUser: Handler = async ({ req, env, auth, params }) => {
     sets.push('banned = ?');
     vals.push(b.banned ? 1 : 0);
   }
+  if (sets.length) {
+    const what = [
+      typeof b.banned === 'boolean' ? (b.banned ? 'ban' : 'unban') : '',
+      typeof b.displayName === 'string' ? 'name' : '',
+      typeof b.bio === 'string' ? 'bio' : '',
+      typeof b.uid === 'string' ? 'uid' : '',
+    ].filter(Boolean).join(',');
+    await writeAudit(env, actor.userId, 'user.update', params[0], what);
+  }
   if (sets.length === 0) throw new HttpError(400, 'لا يوجد تعديل');
   await env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, params[0]).run();
   if (b.banned === true) await dropUserSessions(env, params[0]);
@@ -683,13 +722,14 @@ const adminLogoutUser: Handler = async ({ env, auth, params }) => {
 };
 
 const adminDeleteUser: Handler = async ({ env, auth, params }) => {
-  await requireAdmin(env, auth);
+  const actor = await requireAdmin(env, auth);
   const target = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(params[0]).first<{ email: string | null }>();
   if (!target) throw new HttpError(404, 'الحساب غير موجود');
   if (isAdminEmail(target.email)) throw new HttpError(400, 'لا يمكن حذف حساب المطور');
   await dropUserSessions(env, params[0]);
   await env.DB.prepare('DELETE FROM support_tickets WHERE user_id = ?').bind(params[0]).run();
   await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(params[0]).run();
+  await writeAudit(env, actor.userId, 'user.delete', params[0]);
   return json({ ok: true });
 };
 
@@ -761,6 +801,10 @@ const routes: Route[] = [
   { method: 'POST', pattern: /^\/api\/support$/, handler: createTicket },
   { method: 'GET', pattern: /^\/api\/support$/, handler: myTickets },
   { method: 'GET', pattern: /^\/api\/admin\/stats$/, handler: adminStats },
+  { method: 'GET', pattern: /^\/api\/admin\/settings$/, handler: adminGetSettings },
+  { method: 'PUT', pattern: /^\/api\/admin\/settings$/, handler: adminPutSettings },
+  { method: 'GET', pattern: /^\/api\/admin\/audit$/, handler: adminListAudit },
+  { method: 'GET', pattern: /^\/api\/settings$/, handler: getPublicSettings, public: true },
   { method: 'GET', pattern: /^\/api\/admin\/users$/, handler: adminListUsers },
   { method: 'PATCH', pattern: /^\/api\/admin\/users\/([\w-]+)$/, handler: adminPatchUser },
   { method: 'DELETE', pattern: /^\/api\/admin\/users\/([\w-]+)$/, handler: adminDeleteUser },

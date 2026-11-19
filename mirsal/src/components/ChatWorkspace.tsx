@@ -22,7 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Conversation, DecryptedMessagePayload, Message, MessageType } from '../types/chat';
-import { formatArabicTime, formatCallDuration } from '../utils/messaging';
+import { formatArabicTime, formatCallDuration, formatDayLabel, isGrouped, isSameDay } from '../utils/messaging';
 
 interface ChatWorkspaceProps {
   conversation: Conversation | null;
@@ -381,27 +381,39 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       </header>
 
       {/* Message Stream */}
-      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-3" data-testid="message-stream">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-5" data-testid="message-stream">
         <div className="max-w-lg mx-auto px-4 py-2 rounded-xl bg-white/80 dark:bg-[var(--d-surface)]/90 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-600 dark:text-slate-400 flex items-center justify-center gap-2">
           <Lock className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400 shrink-0" />
           <span>الرسائل والمكالمات مشفرة طرف إلى طرف عبر AES-256-GCM</span>
         </div>
 
-        {messages.map((msg) => {
+        {messages.map((msg, idx) => {
           const isMine = msg.senderId === currentUserId;
           const d = msg.decrypted ?? { text: 'جاري فك التشفير...' };
+          const prev = messages[idx - 1];
+          const showDate = !prev || !isSameDay(prev.createdAt, msg.createdAt);
+          const groupedWithPrev = !showDate && isGrouped(prev, msg);
 
           return (
+            <React.Fragment key={msg.id}>
+              {showDate && (
+                <div className="flex justify-center my-4">
+                  <span className="date-chip px-3 py-1 rounded-full text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    {formatDayLabel(msg.createdAt)}
+                  </span>
+                </div>
+              )}
             <div
-              key={msg.id}
-              className={`flex flex-col ${isMine ? 'items-start' : 'items-end'}`}
+              className={`flex flex-col ${isMine ? 'items-start' : 'items-end'} ${groupedWithPrev ? 'mt-0.5' : showDate ? '' : 'mt-3'}`}
             >
               <div
                 className={`msg-in group relative max-w-[78%] rounded-[var(--radius-lg)] px-3.5 py-2.5 text-sm leading-relaxed ${
-                  isMine ? 'bubble-out rounded-tr-md' : 'bubble-in text-slate-900 dark:text-slate-100 rounded-tl-md'
+                  isMine
+                    ? `bubble-out ${groupedWithPrev ? '' : 'rounded-tr-md'}`
+                    : `bubble-in text-slate-900 dark:text-slate-100 ${groupedWithPrev ? '' : 'rounded-tl-md'}`
                 }`}
               >
-                {conversation.type === 'group' && !isMine && msg.senderName && (
+                {conversation.type === 'group' && !isMine && !groupedWithPrev && msg.senderName && (
                   <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 mb-1">
                     {msg.senderName}
                   </div>
@@ -539,13 +551,23 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                 </div>
               </div>
             </div>
+            </React.Fragment>
           );
         })}
+        {typingUsers.length > 0 && (
+          <div className="flex flex-col items-end mt-3" role="status" aria-label="يكتب الآن">
+            <div className="bubble-in rounded-[var(--radius-lg)] rounded-tl-md px-4 py-3 text-slate-500 dark:text-slate-300 typing-dots">
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
+        )}
         <div ref={streamEndRef} />
       </div>
 
       {/* Composer */}
-      <footer className="bg-white dark:bg-[var(--d-surface)] border-t border-slate-200 dark:border-slate-800 px-3 sm:px-4 py-3 shrink-0">
+      <footer className="composer-bar px-2 sm:px-3 pt-2.5 shrink-0">
         {mediaError && (
           <div className="mb-2 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs text-red-700 dark:text-red-300 flex items-center justify-between">
             <span>{mediaError}</span>
@@ -597,14 +619,14 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => stopVoiceRecording(true)}
-                className="min-h-[40px] px-3 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-white/60 dark:hover:bg-slate-800"
+                className="btn-glass btn-ghost min-h-[40px] px-3 rounded-lg text-xs font-semibold"
               >
                 إلغاء
               </button>
               <button
                 type="button"
                 onClick={() => stopVoiceRecording(false)}
-                className="min-h-[40px] px-3.5 rounded-lg bg-[var(--accent)] text-white text-xs font-semibold flex items-center gap-1.5"
+                className="btn-glass min-h-[40px] px-3.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
               >
                 <Square className="w-3.5 h-3.5" />
                 <span>إرسال الصوت</span>
@@ -612,7 +634,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             </div>
           </div>
         ) : (
-          <form onSubmit={handleSendText} className="composer-bar flex items-center gap-2 px-3 pt-2.5">
+          <form onSubmit={handleSendText} className="flex items-center gap-1.5 sm:gap-2 w-full min-w-0">
             <input
               ref={fileInputRef}
               type="file"
@@ -647,7 +669,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               autoComplete="off"
               placeholder="اكتب رسالة مشفرة..."
               aria-label="كتابة رسالة مشفرة"
-              className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-[var(--d-bg)] border border-transparent focus:border-emerald-600 focus:bg-white dark:focus:bg-[var(--d-surface2)] text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none transition-colors"
+              className="field-glass flex-1 min-w-0 w-0 min-h-[44px] px-4 py-2 rounded-xl text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
             />
             <button
               type="button"
@@ -663,7 +685,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               disabled={!draft.trim()}
               aria-label="إرسال الرسالة"
               title="إرسال"
-              className="btn-glass send-btn w-12 h-12 rounded-full flex items-center justify-center shrink-0 disabled:cursor-not-allowed"
+              className="btn-glass send-btn w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center shrink-0 disabled:cursor-not-allowed"
             >
               <Send className="w-5 h-5 -scale-x-100" />
             </button>

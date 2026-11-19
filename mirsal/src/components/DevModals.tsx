@@ -6,13 +6,17 @@ import {
   Copy,
   LifeBuoy,
   LogOut,
+  MessageSquare,
+  MessagesSquare,
   Palette,
   Pencil,
   Send,
   Shield,
   Smartphone,
   Trash2,
+  UserX,
   Users,
+  Wifi,
 } from 'lucide-react';
 import type { User } from '../types/chat';
 import { THEMES } from '../themes';
@@ -22,12 +26,12 @@ import { errorMessage, readError } from '../api/client';
 
 type Api = (path: string, init?: RequestInit) => Promise<Response>;
 
-const btn =
-  'min-h-[42px] px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50';
-const primaryBtn = `${btn} bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white`;
-const ghostBtn = `${btn} bg-slate-100 dark:bg-white/5 text-slate-800 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-white/10`;
+const btn = 'min-h-[44px] px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2';
+const primaryBtn = `btn-glass ${btn}`;
+const ghostBtn = `btn-glass btn-ghost ${btn}`;
+const dangerBtn = `btn-glass btn-danger ${btn}`;
 const fieldCls =
-  'w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[var(--d-bg)] text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500';
+  'field-glass w-full min-h-[44px] px-3 py-2 rounded-xl text-sm text-slate-900 dark:text-slate-100';
 
 const fmtDate = (iso: string) => {
   const d = new Date(iso);
@@ -218,7 +222,7 @@ export const ProfileModal: React.FC<{
           <button
             type="button"
             onClick={onLogout}
-            className={`${btn} bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100`}
+            className={`${dangerBtn}`}
           >
             <LogOut className="w-4 h-4" /> تسجيل الخروج
           </button>
@@ -228,7 +232,7 @@ export const ProfileModal: React.FC<{
         <button
           type="button"
           onClick={onLogout}
-          className={`${btn} w-full mt-2.5 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100`}
+          className={`${dangerBtn} w-full mt-2.5`}
         >
           <LogOut className="w-4 h-4" /> تسجيل الخروج
         </button>
@@ -514,7 +518,7 @@ const UserRow: React.FC<{ u: AdminUser; api: Api; onChanged: () => void }> = ({ 
                     call(`/api/admin/users/${encodeURIComponent(u.id)}`, { method: 'DELETE' }, 'تم حذف الحساب');
                   }
                 }}
-                className={`${btn} bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400`}
+                className={dangerBtn}
               >
                 <Trash2 className="w-3.5 h-3.5" /> حذف
               </button>
@@ -572,8 +576,26 @@ const TicketRow: React.FC<{ t: AdminTicket; api: Api; onChanged: () => void }> =
   );
 };
 
+interface AppSettingsState {
+  registrationOpen: boolean;
+  announcement: string;
+  maintenance: boolean;
+}
+
+interface AuditRow {
+  id: string;
+  action: string;
+  target: string | null;
+  detail: string;
+  created_at: string;
+  actor_name: string | null;
+}
+
 export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, onClose }) => {
-  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look'>('users');
+  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look' | 'settings' | 'audit'>('stats');
+  const [appSettings, setAppSettings] = useState<AppSettingsState | null>(null);
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+  const [audit, setAudit] = useState<AuditRow[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [tickets, setTickets] = useState<AdminTicket[]>([]);
@@ -591,6 +613,30 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
   useEffect(() => {
     if (tab === 'look') loadLook();
   }, [tab, loadLook]);
+
+  const loadSettings = useCallback(async () => {
+    const res = await api('/api/admin/settings');
+    if (res.ok) setAppSettings(((await res.json()) as { settings: AppSettingsState }).settings);
+  }, [api]);
+  const loadAudit = useCallback(async () => {
+    const res = await api('/api/admin/audit?limit=100');
+    if (res.ok) setAudit(((await res.json()) as { entries: AuditRow[] }).entries);
+  }, [api]);
+  useEffect(() => {
+    if (tab === 'settings') loadSettings();
+    if (tab === 'audit') loadAudit();
+  }, [tab, loadSettings, loadAudit]);
+
+  const saveSettings = async (patch: Partial<AppSettingsState>) => {
+    setSettingsMsg(null);
+    const res = await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(patch) });
+    if (!res.ok) {
+      setSettingsMsg(await readError(res, 'تعذر حفظ الإعدادات'));
+      return;
+    }
+    setAppSettings(((await res.json()) as { settings: AppSettingsState }).settings);
+    setSettingsMsg('تم الحفظ');
+  };
 
   const saveLook = async () => {
     setWpMsg(null);
@@ -644,33 +690,35 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
     return () => window.clearTimeout(t);
   }, [q, loadUsers]);
 
-  const statCards: [string, number | undefined][] = [
-    ['الحسابات', stats?.users],
-    ['متصل الآن', stats?.online],
-    ['المحادثات', stats?.conversations],
-    ['الرسائل', stats?.messages],
-    ['موقوفة', stats?.banned],
-    ['دعم مفتوح', stats?.openTickets],
+  const statCards: [string, number | undefined, React.ReactNode][] = [
+    ['الحسابات', stats?.users, <Users key="u" className="w-5 h-5" />],
+    ['متصل الآن', stats?.online, <Wifi key="o" className="w-5 h-5" />],
+    ['المحادثات', stats?.conversations, <MessagesSquare key="c" className="w-5 h-5" />],
+    ['الرسائل', stats?.messages, <MessageSquare key="m" className="w-5 h-5" />],
+    ['موقوفة', stats?.banned, <UserX key="b" className="w-5 h-5" />],
+    ['دعم مفتوح', stats?.openTickets, <LifeBuoy key="t" className="w-5 h-5" />],
   ];
 
   return (
     <ModalShell title="لوحة المطور" onClose={onClose} wide>
-      <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-white/5 rounded-xl mb-4">
+      <div role="tablist" aria-label="أقسام لوحة المطور" className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-3 -mx-1 px-1">
         {(
           [
+            ['stats', 'الإحصائيات'],
             ['users', 'الحسابات'],
             ['tickets', `الدعم${stats?.openTickets ? ` (${stats.openTickets})` : ''}`],
-            ['stats', 'الإحصائيات'],
+            ['settings', 'الإعدادات'],
             ['look', 'المظهر'],
+            ['audit', 'السجل'],
           ] as const
         ).map(([id, label]) => (
           <button
             key={id}
             type="button"
+            role="tab"
+            aria-selected={tab === id}
             onClick={() => setTab(id)}
-            className={`flex-1 min-h-[38px] text-xs font-semibold rounded-lg ${
-              tab === id ? 'bg-white dark:bg-[var(--d-surface2)] text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400'
-            }`}
+            className={`btn-glass ${tab === id ? '' : 'btn-ghost'} shrink-0 min-h-[44px] px-4 rounded-xl text-xs font-semibold whitespace-nowrap`}
           >
             {label}
           </button>
@@ -722,11 +770,79 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
 
       {tab === 'stats' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {statCards.map(([label, value]) => (
-            <div key={label} className="rounded-xl border border-slate-200 dark:border-white/10 p-4 text-center">
-              <Users className="w-4 h-4 mx-auto text-[color:var(--accent)] mb-1.5" />
+          {statCards.map(([label, value, icon]) => (
+            <div key={label} className="glass-panel p-4 text-center">
+              <div className="mx-auto mb-2 w-10 h-10 rounded-full flex items-center justify-center bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-[color:var(--accent)]">{icon}</div>
               <div className="text-2xl font-bold tabular-nums text-slate-900 dark:text-white">{value ?? '—'}</div>
               <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+
+      {tab === 'settings' && appSettings && (
+        <div className="space-y-3">
+          <label className="glass-panel flex items-center justify-between gap-3 p-3.5 min-h-[56px]">
+            <span className="text-sm text-slate-800 dark:text-slate-100">السماح بالتسجيل الجديد</span>
+            <input
+              type="checkbox"
+              checked={appSettings.registrationOpen}
+              onChange={(e) => saveSettings({ registrationOpen: e.target.checked })}
+              className="w-5 h-5 accent-[var(--accent)]"
+            />
+          </label>
+          <label className="glass-panel flex items-center justify-between gap-3 p-3.5 min-h-[56px]">
+            <span className="text-sm text-slate-800 dark:text-slate-100">وضع الصيانة (يمنع إرسال الرسائل)</span>
+            <input
+              type="checkbox"
+              checked={appSettings.maintenance}
+              onChange={(e) => saveSettings({ maintenance: e.target.checked })}
+              className="w-5 h-5 accent-[var(--accent)]"
+            />
+          </label>
+          <div className="glass-panel p-3.5 space-y-2">
+            <span className="text-sm text-slate-800 dark:text-slate-100">إعلان يظهر للجميع (فارغ = مخفي)</span>
+            <textarea
+              defaultValue={appSettings.announcement}
+              maxLength={300}
+              rows={2}
+              id="announcement-input"
+              className="field-glass w-full rounded-lg p-2 text-sm text-slate-900 dark:text-slate-100"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('announcement-input') as HTMLTextAreaElement | null;
+                saveSettings({ announcement: el?.value ?? '' });
+              }}
+              className="btn-glass min-h-[40px] px-4 rounded-lg text-xs font-semibold"
+            >
+              حفظ الإعلان
+            </button>
+          </div>
+          {settingsMsg && (
+            <p role="status" className="text-xs text-slate-600 dark:text-slate-300">
+              {settingsMsg}
+            </p>
+          )}
+        </div>
+      )}
+
+      {tab === 'audit' && (
+        <div className="space-y-2">
+          {audit.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-6">لا توجد إجراءات مسجّلة بعد</p>}
+          {audit.map((row) => (
+            <div key={row.id} className="rounded-lg border border-slate-200 dark:border-white/10 p-2.5 text-xs">
+              <div className="flex justify-between gap-2">
+                <span className="font-semibold text-slate-900 dark:text-white">{row.action}</span>
+                <span className="text-slate-500 dark:text-slate-400 tabular-nums">{new Date(row.created_at).toLocaleString('ar')}</span>
+              </div>
+              <div className="text-slate-600 dark:text-slate-300 mt-0.5">
+                بواسطة: {row.actor_name ?? 'غير معروف'}
+                {row.target ? ` · الهدف: ${row.target}` : ''}
+                {row.detail ? ` · ${row.detail}` : ''}
+              </div>
             </div>
           ))}
         </div>
