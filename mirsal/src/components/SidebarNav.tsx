@@ -10,6 +10,7 @@ import {
   Smartphone,
   Sun,
   User as UserIcon,
+  Settings,
 } from 'lucide-react';
 import type { User } from '../types/chat';
 
@@ -23,6 +24,7 @@ interface SidebarNavProps {
   onOpenDevices: () => void;
   onOpenProfile: () => void;
   onOpenThemes: () => void;
+  onOpenSettings: () => void;
   onOpenSupport: () => void;
   onOpenAdmin: () => void;
   onLogout: () => void;
@@ -39,6 +41,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
   onOpenDevices,
   onOpenProfile,
   onOpenThemes,
+  onOpenSettings,
   onOpenSupport,
   onOpenAdmin,
   onLogout,
@@ -108,6 +111,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
             <Smartphone className="w-5 h-5" />
           </button>
 
+          <button type="button" onClick={onOpenSettings} aria-label="الإعدادات" title="الإعدادات" className="icon-btn" ><Settings className="w-5 h-5" /></button>
           <button type="button" onClick={onOpenThemes} aria-label="الثيمات" title="الثيمات" className={railBtn}>
             <Palette className="w-5 h-5" />
           </button>

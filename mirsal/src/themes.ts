@@ -4,6 +4,8 @@ export interface AppTheme {
   /** CSS used for the small preview card in the theme picker. */
   preview: string;
   accent: string;
+  /** A light-first theme: choosing it also switches the app to light mode. */
+  light?: boolean;
 }
 
 export const THEMES: AppTheme[] = [
@@ -13,6 +15,7 @@ export const THEMES: AppTheme[] = [
   { id: 'night', name: 'الليلي', accent: '#3648ba', preview: 'radial-gradient(circle at 75% 25%, #e2e8f0 0, #6366f1 8%, transparent 10%), linear-gradient(180deg,#1e2a66,#070912)' },
   { id: 'pink', name: 'الوردي', accent: '#d51a78', preview: 'radial-gradient(ellipse at 50% 0, #f9a8d4, transparent 60%), linear-gradient(180deg,#be185d,#1A0B15)' },
   { id: 'gold', name: 'الذهبي', accent: '#e1a20e', preview: 'radial-gradient(ellipse at 50% 0, #fde047, transparent 60%), linear-gradient(180deg,#b45309,#14100A)' },
+  { id: 'pearl', name: 'لؤلؤ (فاتح)', accent: '#0f766e', light: true, preview: 'radial-gradient(ellipse at 50% 0, #99f6e4, transparent 60%), linear-gradient(180deg,#f0fdfa,#ccfbf1)' },
 ];
 
 export const DEFAULT_THEME = 'neon';

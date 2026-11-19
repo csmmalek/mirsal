@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Check,
   CheckCheck,
+  Clock,
   Download,
   FileText,
   Info,
@@ -12,6 +13,7 @@ import {
   Phone,
   PhoneCall,
   Reply,
+  RotateCw,
   Send,
   Smile,
   Square,
@@ -20,7 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Conversation, DecryptedMessagePayload, Message, MessageType } from '../types/chat';
-import { canSendDraft, formatArabicTime, formatCallDuration } from '../utils/messaging';
+import { formatArabicTime, formatCallDuration } from '../utils/messaging';
 
 interface ChatWorkspaceProps {
   conversation: Conversation | null;
@@ -28,8 +30,9 @@ interface ChatWorkspaceProps {
   currentUserId: string;
   typingUsers: string[];
   onBackMobile: () => void;
-  onSendMessage: (type: MessageType, payload: DecryptedMessagePayload) => Promise<void>;
-  onRetry?: (messageId: string) => void;
+  /** تعيد true حين تُقبل الرسالة وتظهر في المحادثة، وfalse إن تعذّر تجهيزها (يبقى النص في الحقل). */
+  onSendMessage: (type: MessageType, payload: DecryptedMessagePayload) => Promise<boolean>;
+  onRetryMessage: (msg: Message) => void;
   onTyping: (isTyping: boolean) => void;
   onStartCall: (kind: 'audio' | 'video') => void;
   onOpenChatInfo: () => void;
@@ -71,7 +74,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   typingUsers,
   onBackMobile,
   onSendMessage,
-  onRetry,
+  onRetryMessage,
   onTyping,
   onStartCall,
   onOpenChatInfo,
@@ -83,7 +86,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const [isRecording, setIsRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [mediaError, setMediaError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
 
   const streamEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -91,6 +93,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<number | null>(null);
   const typingTimeoutRef = useRef<number | null>(null);
+  const sendLockRef = useRef(false);
 
   useEffect(() => {
     streamEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -143,17 +146,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             ? `آخر ظهور ${formatArabicTime(otherMember.lastSeen)}`
             : 'محادثة مشفرة';
 
-  /** Sends and reports failure to the person instead of leaving an unhandled rejection. */
-  const sendOrReport = async (type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
-    try {
-      await onSendMessage(type, payload);
-      return true;
-    } catch {
-      setMediaError('تعذر إرسال الرسالة. تحقق من الاتصال ثم حاول مرة أخرى.');
-      return false;
-    }
-  };
-
   const handleDraftChange = (val: string) => {
     setDraft(val);
     onTyping(val.trim().length > 0);
@@ -164,28 +156,34 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const handleSendText = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const text = draft.trim();
-    if (!canSendDraft(draft, sending)) return;
-    const quoted = replyTo;
-    setSending(true);
+    if (!text || sendLockRef.current) return;
+    sendLockRef.current = true;
     setMediaError(null);
-    setDraft('');
-    onTyping(false);
-    setShowEmojiPicker(false);
-    const payload: DecryptedMessagePayload = { text };
-    if (quoted) {
-      payload.replyToId = quoted.id;
-      payload.replyPreview = quoted.decrypted?.text || 'وسائط مشفرة';
-      setReplyTo(null);
-    }
     try {
-      await onSendMessage('text', payload);
-    } catch {
-      // Keep what the person wrote so nothing is lost; they can press send again.
-      setDraft(text);
-      setReplyTo(quoted);
-      setMediaError('تعذر إرسال الرسالة. تحقق من الاتصال ثم اضغط إرسال مرة أخرى.');
+      const payload: DecryptedMessagePayload = { text };
+      if (replyTo) {
+        payload.replyToId = replyTo.id;
+        payload.replyPreview = replyTo.decrypted?.text || 'وسائط مشفرة';
+      }
+      const accepted = await onSendMessage('text', payload);
+      if (!accepted) {
+        // لا نفرّغ الحقل: النص باقٍ ليعيد المستخدم المحاولة.
+        setMediaError('تعذر إرسال الرسالة، تحقق من الاتصال وحاول مجدداً');
+        return;
+      }
+      setDraft('');
+      setReplyTo(null);
+      setShowEmojiPicker(false);
+      onTyping(false);
     } finally {
-      setSending(false);
+      sendLockRef.current = false;
+    }
+  };
+
+  const handleDraftKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      void handleSendText();
     }
   };
 
@@ -217,23 +215,24 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         return;
       }
       if (file.type.startsWith('image/')) {
-        const sent = await sendOrReport('image', {
+        const ok = await onSendMessage('image', {
           text: draft.trim() || undefined,
           mediaUrl: dataUrl,
           mediaName: file.name,
           mediaSize: file.size,
           mimeType: file.type,
         });
-        if (sent) setDraft('');
+        if (ok) setDraft('');
+        else setMediaError('تعذر إرسال الصورة، حاول مجدداً');
       } else if (file.type.startsWith('audio/')) {
-        await sendOrReport('audio', {
+        await onSendMessage('audio', {
           mediaUrl: dataUrl,
           mediaName: file.name,
           mediaSize: file.size,
           mimeType: file.type,
         });
       } else {
-        await sendOrReport('file', {
+        await onSendMessage('file', {
           mediaUrl: dataUrl,
           mediaName: file.name,
           mediaSize: file.size,
@@ -267,7 +266,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         }
         const reader = new FileReader();
         reader.onload = async () => {
-          await sendOrReport('audio', {
+          await onSendMessage('audio', {
             mediaUrl: String(reader.result || ''),
             mediaName: 'voice-note.webm',
             mediaSize: blob.size,
@@ -398,10 +397,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               className={`flex flex-col ${isMine ? 'items-start' : 'items-end'}`}
             >
               <div
-                className={`group relative max-w-[85%] sm:max-w-[70%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-                  isMine
-                    ? 'bg-[var(--accent)] text-white rounded-tr-sm'
-                    : 'bg-white dark:bg-[var(--d-surface2)] text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 rounded-tl-sm'
+                className={`msg-in group relative max-w-[78%] rounded-[var(--radius-lg)] px-3.5 py-2.5 text-sm leading-relaxed ${
+                  isMine ? 'bubble-out rounded-tr-md' : 'bubble-in text-slate-900 dark:text-slate-100 rounded-tl-md'
                 }`}
               >
                 {conversation.type === 'group' && !isMine && msg.senderName && (
@@ -498,7 +495,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
 
                 <div
                   className={`mt-1.5 flex items-center justify-end gap-1.5 text-[11px] tabular-nums ${
-                    isMine ? 'text-emerald-100/90' : 'text-slate-400 dark:text-slate-500'
+                    isMine ? 'opacity-80' : 'text-slate-400 dark:text-slate-500'
                   }`}
                 >
                   <button
@@ -511,15 +508,25 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                   </button>
                   <span>{formatArabicTime(msg.createdAt)}</span>
                   {isMine && (
-                    <span>
+                    <span className="flex items-center gap-1">
                       {msg.status === 'failed' ? (
-                        <button
-                          type="button"
-                          onClick={() => onRetry?.(msg.id)}
-                          className="text-red-200 font-semibold underline underline-offset-2"
-                        >
-                          فشل الإرسال، اضغط لإعادة المحاولة
-                        </button>
+                        <>
+                          <span className="text-red-200 font-semibold">فشل الإرسال</span>
+                          <button
+                            type="button"
+                            onClick={() => onRetryMessage(msg)}
+                            aria-label="إعادة محاولة الإرسال"
+                            className="min-h-[24px] px-1.5 rounded-md bg-white/20 hover:bg-white/30 flex items-center gap-1 font-semibold"
+                          >
+                            <RotateCw className="w-3 h-3" />
+                            <span>إعادة المحاولة</span>
+                          </button>
+                        </>
+                      ) : msg.status === 'sending' ? (
+                        <span className="flex items-center gap-1 opacity-80">
+                          <Clock className="w-3.5 h-3.5 animate-pulse" />
+                          <span>جارٍ الإرسال</span>
+                        </span>
                       ) : msg.status === 'read' ? (
                         <CheckCheck className="w-3.5 h-3.5" />
                       ) : msg.status === 'delivered' ? (
@@ -605,7 +612,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             </div>
           </div>
         ) : (
-          <form onSubmit={handleSendText} className="flex items-center gap-2">
+          <form onSubmit={handleSendText} className="composer-bar flex items-center gap-2 px-3 pt-2.5">
             <input
               ref={fileInputRef}
               type="file"
@@ -635,28 +642,30 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               type="text"
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
+              onKeyDown={handleDraftKeyDown}
+              enterKeyHint="send"
+              autoComplete="off"
               placeholder="اكتب رسالة مشفرة..."
               aria-label="كتابة رسالة مشفرة"
-              enterKeyHint="send"
-              className="flex-1 min-h-[44px] px-5 py-2 rounded-full bg-slate-100 dark:bg-[var(--d-bg)] border border-transparent focus:border-emerald-600 focus:bg-white dark:focus:bg-[var(--d-surface2)] text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none transition-colors"
+              className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-[var(--d-bg)] border border-transparent focus:border-emerald-600 focus:bg-white dark:focus:bg-[var(--d-surface2)] text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none transition-colors"
             />
             <button
               type="button"
               onClick={startVoiceRecording}
               aria-label="تسجيل رسالة صوتية"
               title="تسجيل رسالة صوتية"
-              className="voice-btn text-slate-700 dark:text-slate-200"
+              className="min-h-[44px] min-w-[44px] rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center transition-colors shrink-0"
             >
               <Mic className="w-5 h-5" />
             </button>
             <button
               type="submit"
-              disabled={!canSendDraft(draft, sending)}
+              disabled={!draft.trim()}
               aria-label="إرسال الرسالة"
               title="إرسال"
-              className="send-orb"
+              className="btn-glass send-btn w-12 h-12 rounded-full flex items-center justify-center shrink-0 disabled:cursor-not-allowed"
             >
-              {sending ? <span className="send-orb__spin" aria-hidden="true" /> : <Send className="w-5 h-5 send-orb__icon" />}
+              <Send className="w-5 h-5 -scale-x-100" />
             </button>
           </form>
         )}

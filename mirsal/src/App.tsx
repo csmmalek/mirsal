@@ -8,6 +8,9 @@ import { SidebarNav } from './components/SidebarNav';
 import { ChatInfoModal, DevicesModal, NewChatModal, NotificationsModal } from './components/SideModals';
 import { AdminModal, ProfileModal, SupportModal, ThemeModal } from './components/DevModals';
 import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
+import { createApi } from './api/client';
+import { SettingsModal } from './components/SettingsModal';
+import { ThemeMode } from './preferences';
 import type {
   ActiveCallState,
   Conversation,
@@ -93,12 +96,26 @@ export default function App() {
   const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
 
   const [activeModal, setActiveModal] = useState<
-    null | 'new_chat' | 'devices' | 'notifications' | 'chat_info' | 'profile' | 'themes' | 'support' | 'admin'
+    null | 'new_chat' | 'devices' | 'notifications' | 'chat_info' | 'profile' | 'themes' | 'settings' | 'support' | 'admin'
   >(null);
   const [chatFingerprint, setChatFingerprint] = useState('');
   const [toastNotification, setToastNotification] = useState<PushNotificationItem | null>(null);
 
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem(LS.theme) !== 'light');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const v = localStorage.getItem(LS.theme);
+    return v === 'light' || v === 'auto' ? v : 'dark';
+  });
+  const [systemDark, setSystemDark] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : true
+  );
+  const darkMode = themeMode === 'auto' ? systemDark : themeMode === 'dark';
+  const setDarkMode = useCallback((next: boolean | ((d: boolean) => boolean)) => {
+    setThemeMode((prev) => {
+      const cur = prev === 'auto' ? systemDark : prev === 'dark';
+      const v = typeof next === 'function' ? next(cur) : next;
+      return v ? 'dark' : 'light';
+    });
+  }, [systemDark]);
   const [colorTheme, setColorTheme] = useState(() => {
     const saved = localStorage.getItem(LS.color);
     return THEMES.some((t) => t.id === saved) ? (saved as string) : DEFAULT_THEME;
@@ -140,14 +157,33 @@ export default function App() {
   soundRef.current = soundEnabled;
 
   useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
-    localStorage.setItem(LS.theme, darkMode ? 'dark' : 'light');
-  }, [darkMode]);
+    localStorage.setItem(LS.theme, themeMode);
+  }, [darkMode, themeMode]);
 
   useEffect(() => {
     applyTheme(colorTheme);
     localStorage.setItem(LS.color, colorTheme);
   }, [colorTheme]);
+
+  /** ثيم «فاتح» (مثل لؤلؤ) يفرض الوضع الفاتح؛ غيره يترك الوضع كما اختاره المستخدم. */
+  const pickColorTheme = useCallback(
+    (id: string) => {
+      const t = THEMES.find((x) => x.id === id);
+      if (t?.light) setThemeMode('light');
+      else if (t && themeMode === 'light' && colorTheme === 'pearl') setThemeMode('dark');
+      setColorTheme(id);
+    },
+    [colorTheme, themeMode]
+  );
 
   /* ------------------------------- session ------------------------------- */
 
@@ -167,19 +203,8 @@ export default function App() {
     setActiveCall(null);
   }, []);
 
-  const api = useCallback(
-    async (path: string, init: RequestInit = {}): Promise<Response> => {
-      const res = await fetch(path, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : {}),
-          ...(init.headers as Record<string, string> | undefined),
-        },
-      });
-      if (res.status === 401 && tokenRef.current && !path.startsWith('/api/auth/')) clearSession();
-      return res;
-    },
+  const api = useMemo(
+    () => createApi({ getToken: () => tokenRef.current, onUnauthorized: clearSession }),
     [clearSession]
   );
 
@@ -376,9 +401,9 @@ export default function App() {
   }, []);
 
   const sendMessageTo = useCallback(
-    async (convId: string, type: MessageType, payload: DecryptedMessagePayload) => {
+    async (convId: string, type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
       const user = currentUserRef.current;
-      if (!user) return;
+      if (!user) return false;
       const id = newMsgId();
       const createdAt = new Date().toISOString();
       const setStatus = (status: Message['status']) =>
@@ -393,8 +418,8 @@ export default function App() {
         const key = await getConversationKey(convId);
         ({ ciphertext, iv } = await encryptMessagePayload(payload, key));
       } catch {
-        // No message was created, so tell the caller (the composer restores the draft).
-        throw new Error('encrypt-failed');
+        // تعذّر التشفير (مفتاح المحادثة غير متاح): لا نُظهر رسالة وهمية، ويحتفظ الحقل بالنص ليعيد المستخدم المحاولة.
+        return false;
       }
 
       const optimistic: Message = {
@@ -414,45 +439,47 @@ export default function App() {
         prev.map((c) => (c.id === convId ? { ...c, updatedAt: createdAt, lastMessage: optimistic } : c))
       );
 
-      try {
-        const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
-          method: 'POST',
-          body: JSON.stringify({ id, type, ciphertext, iv }),
-        });
-        if (!res.ok) throw new Error(String(res.status));
-        const { message } = (await res.json()) as { message: Message };
-        // Never downgrade: the realtime echo may already have marked it delivered/read.
-        setMessagesByConv((prev) => ({
-          ...prev,
-          [convId]: (prev[convId] || []).map((m) =>
-            m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
-          ),
-        }));
-      } catch {
-        setStatus('failed');
-      }
+      // الرسالة ظاهرة الآن (حالة «جارٍ الإرسال»)؛ التسليم للخادم يكمل في الخلفية دون حجب الواجهة.
+      void (async () => {
+        try {
+          const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ id, type, ciphertext, iv }),
+          });
+          if (!res.ok) throw new Error(String(res.status));
+          const { message } = (await res.json()) as { message: Message };
+          // Never downgrade: the realtime echo may already have marked it delivered/read.
+          setMessagesByConv((prev) => ({
+            ...prev,
+            [convId]: (prev[convId] || []).map((m) =>
+              m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            ),
+          }));
+        } catch {
+          setStatus('failed');
+        }
+      })();
+      return true;
     },
     [api, getConversationKey]
   );
 
   const handleSendMessage = useCallback(
-    async (type: MessageType, payload: DecryptedMessagePayload) => {
-      if (activeConvIdRef.current) await sendMessageTo(activeConvIdRef.current, type, payload);
+    async (type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
+      if (!activeConvIdRef.current) return false;
+      return sendMessageTo(activeConvIdRef.current, type, payload);
     },
     [sendMessageTo]
   );
 
-  /** Re-sends a message that failed on the network, reusing its stored ciphertext. */
-  const retryMessage = useCallback(
-    async (msgId: string) => {
-      const convId = activeConvIdRef.current;
-      if (!convId) return;
-      const msg = (messagesByConv[convId] || []).find((m) => m.id === msgId && m.status === 'failed');
-      if (!msg) return;
+  /** إعادة إرسال رسالة فشلت: نفس المعرّف، والخادم يتجاهل التكرار فلا تصل نسختان. */
+  const handleRetryMessage = useCallback(
+    async (msg: Message) => {
+      const convId = msg.conversationId;
       const setStatus = (status: Message['status']) =>
         setMessagesByConv((prev) => ({
           ...prev,
-          [convId]: (prev[convId] || []).map((m) => (m.id === msgId ? { ...m, status } : m)),
+          [convId]: (prev[convId] || []).map((m) => (m.id === msg.id ? { ...m, status } : m)),
         }));
       setStatus('sending');
       try {
@@ -465,14 +492,14 @@ export default function App() {
         setMessagesByConv((prev) => ({
           ...prev,
           [convId]: (prev[convId] || []).map((m) =>
-            m.id === msgId && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            m.id === msg.id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
           ),
         }));
       } catch {
         setStatus('failed');
       }
     },
-    [api, messagesByConv]
+    [api]
   );
 
   /** Ends local call state; the caller's device writes the call record into the chat. */
@@ -492,8 +519,6 @@ export default function App() {
           callKind: call.kind,
           callOutcome: result,
           durationSec: duration,
-        }).catch(() => {
-          /* the call record is best-effort */
         });
       }
     },
@@ -954,6 +979,7 @@ export default function App() {
         onOpenDevices={() => setActiveModal('devices')}
         onOpenProfile={() => setActiveModal('profile')}
         onOpenThemes={() => setActiveModal('themes')}
+        onOpenSettings={() => setActiveModal('settings')}
         onOpenSupport={() => setActiveModal('support')}
         onOpenAdmin={() => setActiveModal('admin')}
         onLogout={() => {
@@ -997,7 +1023,7 @@ export default function App() {
           typingUsers={activeConversationId ? typingByConv[activeConversationId] || [] : []}
           onBackMobile={() => setMobileView('list')}
           onSendMessage={handleSendMessage}
-          onRetry={retryMessage}
+          onRetryMessage={handleRetryMessage}
           onTyping={handleTyping}
           onStartCall={handleStartCall}
           onOpenChatInfo={() => setActiveModal('chat_info')}
@@ -1061,10 +1087,13 @@ export default function App() {
       {activeModal === 'profile' && (
         <ProfileModal
           user={currentUser}
+          api={api}
+          onUserChange={setCurrentUser}
           onClose={() => setActiveModal(null)}
           onOpenDevices={() => setActiveModal('devices')}
           onOpenSupport={() => setActiveModal('support')}
           onOpenThemes={() => setActiveModal('themes')}
+          onOpenSettings={() => setActiveModal('settings')}
           onOpenAdmin={() => setActiveModal('admin')}
           onLogout={() => {
             setActiveModal(null);
@@ -1073,7 +1102,27 @@ export default function App() {
         />
       )}
       {activeModal === 'themes' && (
-        <ThemeModal current={colorTheme} onApply={setColorTheme} onClose={() => setActiveModal(null)} />
+        <ThemeModal current={colorTheme} onApply={pickColorTheme} onClose={() => setActiveModal(null)} />
+      )}
+      {activeModal === 'settings' && (
+        <SettingsModal
+          themeMode={themeMode}
+          onThemeMode={setThemeMode}
+          colorTheme={colorTheme}
+          onColorTheme={pickColorTheme}
+          soundEnabled={soundEnabled}
+          onToggleSound={() => setSoundEnabled((v) => !v)}
+          browserPermission={browserPermission}
+          onRequestBrowserPermission={async () => {
+            if (typeof Notification !== 'undefined') setBrowserPermission(await Notification.requestPermission());
+          }}
+          onOpenProfile={() => setActiveModal('profile')}
+          onLogout={() => {
+            setActiveModal(null);
+            api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined).finally(clearSession);
+          }}
+          onClose={() => setActiveModal(null)}
+        />
       )}
       {activeModal === 'support' && <SupportModal api={api} onClose={() => setActiveModal(null)} />}
       {activeModal === 'admin' && currentUser.isAdmin && <AdminModal api={api} onClose={() => setActiveModal(null)} />}
