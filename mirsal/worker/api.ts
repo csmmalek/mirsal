@@ -21,7 +21,6 @@ import { broadcast, getOnlineUserIds, revokeDevice } from './realtime';
 import { ensureSchema, newUid } from './schema';
 import { isAdminEmail } from './admin';
 import { readWallpapers, sanitizeWallpapers, writeWallpapers } from './appearance';
-import { listAudit, readSettings, sanitizeSettings, writeAudit, writeSettings } from './settings';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
 
 interface Ctx {
@@ -60,7 +59,6 @@ function requireB64(v: unknown, label: string, max: number): string {
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
 
 const register: Handler = async ({ req, env }) => {
-  if (!(await readSettings(env)).registrationOpen) throw new HttpError(403, 'التسجيل مغلق حالياً');
   const b = await readJson(req);
   const email = str(b.email, 120).trim().toLowerCase();
   if (!EMAIL_RE.test(email)) throw new HttpError(400, 'يرجى إدخال بريد إلكتروني صحيح');
@@ -158,56 +156,42 @@ const me: Handler = async ({ env, auth }) => {
   return json({ user: mapUser(row, await getOnlineUserIds(env), true), deviceId: a.deviceId });
 };
 
+const AVATAR_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+const MAX_AVATAR_CHARS = 150_000;
 
-const MAX_AVATAR_CHARS = 90_000; // ~65 KB image; the client sends a 256px JPEG of roughly 15-30 KB
-const AVATAR_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/;
-
-const putAvatar: Handler = async ({ req, env, auth }) => {
+const patchMe: Handler = async ({ req, env, auth }) => {
   const a = requireAuth(auth);
   const b = await readJson(req);
-  const avatar = typeof b.avatar === 'string' ? b.avatar : '';
-  if (!avatar) throw new HttpError(400, 'لم يتم إرسال صورة');
-  if (avatar.length > MAX_AVATAR_CHARS) throw new HttpError(413, 'الصورة كبيرة جداً، اختر صورة أصغر');
-  if (!AVATAR_RE.test(avatar)) throw new HttpError(415, 'نوع الصورة غير مدعوم، استخدم JPG أو PNG أو WebP');
-  await env.DB.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').bind(avatar, a.userId).run();
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (typeof b.displayName === 'string') {
+    const name = str(b.displayName, 40).trim();
+    if (!name) throw new HttpError(400, 'الاسم لا يمكن أن يكون فارغاً');
+    sets.push('display_name = ?');
+    vals.push(name);
+  }
+  if (typeof b.bio === 'string') {
+    sets.push('bio = ?');
+    vals.push(str(b.bio, 140).trim());
+  }
+  if (typeof b.statusText === 'string') {
+    sets.push('status_text = ?');
+    vals.push(str(b.statusText, 60).trim());
+  }
+  if (b.avatar === null) {
+    sets.push('avatar_data = NULL');
+  } else if (typeof b.avatar === 'string') {
+    if (b.avatar.length > MAX_AVATAR_CHARS || !AVATAR_RE.test(b.avatar)) {
+      throw new HttpError(400, 'الصورة غير صالحة أو كبيرة جداً');
+    }
+    sets.push('avatar_data = ?');
+    vals.push(b.avatar);
+  }
+  if (sets.length === 0) throw new HttpError(400, 'لا توجد تغييرات للحفظ');
+  await env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, a.userId).run();
   const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(a.userId).first<Record<string, unknown>>();
   if (!row) throw new HttpError(401, 'الحساب غير موجود');
   return json({ user: mapUser(row, await getOnlineUserIds(env), true) });
-};
-
-const deleteAvatar: Handler = async ({ env, auth }) => {
-  const a = requireAuth(auth);
-  await env.DB.prepare('UPDATE users SET avatar_url = NULL WHERE id = ?').bind(a.userId).run();
-  const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(a.userId).first<Record<string, unknown>>();
-  if (!row) throw new HttpError(401, 'الحساب غير موجود');
-  return json({ user: mapUser(row, await getOnlineUserIds(env), true) });
-};
-
-
-const getPublicSettings: Handler = async ({ env }) => {
-  const s = await readSettings(env);
-  return json({ registrationOpen: s.registrationOpen, announcement: s.announcement, maintenance: s.maintenance });
-};
-
-const adminGetSettings: Handler = async ({ env, auth }) => {
-  await requireAdmin(env, auth);
-  return json({ settings: await readSettings(env) });
-};
-
-const adminPutSettings: Handler = async ({ req, env, auth }) => {
-  const a = await requireAdmin(env, auth);
-  const current = await readSettings(env);
-  const next = sanitizeSettings(await readJson(req), current);
-  await writeSettings(env, next);
-  const changed = (Object.keys(next) as (keyof typeof next)[]).filter((k) => next[k] !== current[k]);
-  if (changed.length) await writeAudit(env, a.userId, 'settings.update', null, changed.join(','));
-  return json({ settings: next });
-};
-
-const adminListAudit: Handler = async ({ env, auth, url }) => {
-  await requireAdmin(env, auth);
-  const limit = Number(new URL(url).searchParams.get('limit') ?? 100);
-  return json({ entries: await listAudit(env, limit) });
 };
 
 /* ------------------------------ Users ------------------------------ */
@@ -322,11 +306,10 @@ const listMessages: Handler = async ({ env, auth, params, url }) => {
        SELECT m.*, u.display_name AS sender_name FROM messages m
        LEFT JOIN users u ON u.id = m.sender_id
        WHERE m.conversation_id = ? ${before ? 'AND m.created_at < ?' : ''}
-         AND m.id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
        ORDER BY m.created_at DESC LIMIT ?
      ) ORDER BY created_at ASC`
   )
-    .bind(...(before ? [convId, before, a.userId, limit] : [convId, a.userId, limit]))
+    .bind(...(before ? [convId, before, limit] : [convId, limit]))
     .all<Record<string, unknown>>();
   return json({ messages: results.map(mapMessage) });
 };
@@ -348,7 +331,6 @@ function notificationSummary(type: string): string {
 
 const sendMessage: Handler = async ({ req, env, auth, params }) => {
   const a = requireAuth(auth);
-  if ((await readSettings(env)).maintenance) throw new HttpError(503, 'التطبيق في وضع الصيانة، حاول لاحقاً');
   const convId = params[0];
   const b = await readJson(req);
   const id = str(b.id, 60);
@@ -436,73 +418,6 @@ const sendMessage: Handler = async ({ req, env, auth, params }) => {
   ]);
 
   return json({ message });
-};
-
-const EDIT_WINDOW_MS = 15 * 60 * 1000;
-const DELETE_ALL_WINDOW_MS = 48 * 3_600_000;
-
-async function loadMessageForMember(env: Env, messageId: string, userId: string): Promise<Record<string, unknown>> {
-  const row = await env.DB.prepare(
-    'SELECT m.*, u.display_name AS sender_name FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.id = ?'
-  )
-    .bind(messageId)
-    .first<Record<string, unknown>>();
-  if (!row || !(await isMember(env.DB, String(row.conversation_id), userId))) throw new HttpError(404, 'الرسالة غير موجودة');
-  return row;
-}
-
-const editMessage: Handler = async ({ req, env, auth, params }) => {
-  const a = requireAuth(auth);
-  const row = await loadMessageForMember(env, params[0], a.userId);
-  if (String(row.sender_id) !== a.userId) throw new HttpError(403, 'يمكنك تعديل رسائلك فقط');
-  if (row.deleted_at) throw new HttpError(409, 'هذه الرسالة محذوفة');
-  if (String(row.type) !== 'text') throw new HttpError(400, 'يمكن تعديل الرسائل النصية فقط');
-  if (Date.now() - Date.parse(String(row.created_at)) > EDIT_WINDOW_MS) {
-    throw new HttpError(403, 'انتهت مهلة التعديل (15 دقيقة من الإرسال)');
-  }
-  const b = await readJson(req);
-  const ciphertext = str(b.ciphertext, MAX_CIPHERTEXT + 1);
-  const iv = str(b.iv, 40);
-  if (ciphertext.length > MAX_CIPHERTEXT) throw new HttpError(413, 'الرسالة كبيرة جداً');
-  if (!ciphertext || !B64_RE.test(ciphertext)) throw new HttpError(400, 'نص التشفير غير صالح');
-  if (!iv || !B64_RE.test(iv)) throw new HttpError(400, 'متجه التشفير غير صالح');
-
-  const editedAt = nowIso();
-  await env.DB.prepare('UPDATE messages SET ciphertext = ?, iv = ?, edited_at = ? WHERE id = ?')
-    .bind(ciphertext, iv, editedAt, params[0])
-    .run();
-  const message = mapMessage({ ...row, ciphertext, iv, edited_at: editedAt });
-  const memberIds = await getMemberIds(env.DB, String(row.conversation_id));
-  await broadcast(env, [{ userIds: memberIds, payload: { type: 'message:edited', message } }]);
-  return json({ message });
-};
-
-const deleteMessage: Handler = async ({ env, auth, params, url }) => {
-  const a = requireAuth(auth);
-  const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'me';
-  const row = await loadMessageForMember(env, params[0], a.userId);
-  const convId = String(row.conversation_id);
-
-  if (scope === 'me') {
-    await env.DB.prepare('INSERT OR IGNORE INTO message_hidden (message_id, user_id, hidden_at) VALUES (?, ?, ?)')
-      .bind(params[0], a.userId, nowIso())
-      .run();
-    await broadcast(env, [{ userIds: [a.userId], payload: { type: 'message:hidden', conversationId: convId, messageId: params[0] } }]);
-    return json({ ok: true, scope });
-  }
-
-  if (String(row.sender_id) !== a.userId) throw new HttpError(403, 'يمكنك الحذف للجميع لرسائلك فقط');
-  if (!row.deleted_at) {
-    if (Date.now() - Date.parse(String(row.created_at)) > DELETE_ALL_WINDOW_MS) {
-      throw new HttpError(403, 'انتهت مهلة الحذف للجميع (48 ساعة من الإرسال)');
-    }
-    await env.DB.prepare("UPDATE messages SET deleted_at = ?, ciphertext = '', iv = '' WHERE id = ?")
-      .bind(nowIso(), params[0])
-      .run();
-  }
-  const memberIds = await getMemberIds(env.DB, convId);
-  await broadcast(env, [{ userIds: memberIds, payload: { type: 'message:deleted', conversationId: convId, messageId: params[0] } }]);
-  return json({ ok: true, scope });
 };
 
 const markRead: Handler = async ({ env, auth, params }) => {
@@ -739,7 +654,7 @@ const adminListUsers: Handler = async ({ env, auth, url }) => {
 };
 
 const adminPatchUser: Handler = async ({ req, env, auth, params }) => {
-  const actor = await requireAdmin(env, auth);
+  await requireAdmin(env, auth);
   const target = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(params[0]).first<Record<string, unknown>>();
   if (!target) throw new HttpError(404, 'الحساب غير موجود');
   const b = await readJson(req);
@@ -768,15 +683,6 @@ const adminPatchUser: Handler = async ({ req, env, auth, params }) => {
     sets.push('banned = ?');
     vals.push(b.banned ? 1 : 0);
   }
-  if (sets.length) {
-    const what = [
-      typeof b.banned === 'boolean' ? (b.banned ? 'ban' : 'unban') : '',
-      typeof b.displayName === 'string' ? 'name' : '',
-      typeof b.bio === 'string' ? 'bio' : '',
-      typeof b.uid === 'string' ? 'uid' : '',
-    ].filter(Boolean).join(',');
-    await writeAudit(env, actor.userId, 'user.update', params[0], what);
-  }
   if (sets.length === 0) throw new HttpError(400, 'لا يوجد تعديل');
   await env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, params[0]).run();
   if (b.banned === true) await dropUserSessions(env, params[0]);
@@ -790,14 +696,13 @@ const adminLogoutUser: Handler = async ({ env, auth, params }) => {
 };
 
 const adminDeleteUser: Handler = async ({ env, auth, params }) => {
-  const actor = await requireAdmin(env, auth);
+  await requireAdmin(env, auth);
   const target = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(params[0]).first<{ email: string | null }>();
   if (!target) throw new HttpError(404, 'الحساب غير موجود');
   if (isAdminEmail(target.email)) throw new HttpError(400, 'لا يمكن حذف حساب المطور');
   await dropUserSessions(env, params[0]);
   await env.DB.prepare('DELETE FROM support_tickets WHERE user_id = ?').bind(params[0]).run();
   await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(params[0]).run();
-  await writeAudit(env, actor.userId, 'user.delete', params[0]);
   return json({ ok: true });
 };
 
@@ -850,14 +755,11 @@ const routes: Route[] = [
   { method: 'POST', pattern: /^\/api\/auth\/login$/, handler: login, public: true },
   { method: 'POST', pattern: /^\/api\/auth\/logout$/, handler: logout },
   { method: 'GET', pattern: /^\/api\/me$/, handler: me },
-  { method: 'PUT', pattern: /^\/api\/me\/avatar$/, handler: putAvatar },
-  { method: 'DELETE', pattern: /^\/api\/me\/avatar$/, handler: deleteAvatar },
+  { method: 'PATCH', pattern: /^\/api\/me$/, handler: patchMe },
   { method: 'GET', pattern: /^\/api\/users\/search$/, handler: searchUsers },
   { method: 'GET', pattern: /^\/api\/conversations$/, handler: listConversations },
   { method: 'POST', pattern: /^\/api\/conversations$/, handler: createConversation },
   { method: 'GET', pattern: /^\/api\/conversations\/([\w-]+)$/, handler: getConversation },
-  { method: 'PATCH', pattern: /^\/api\/messages\/([\w-]+)$/, handler: editMessage },
-  { method: 'DELETE', pattern: /^\/api\/messages\/([\w-]+)$/, handler: deleteMessage },
   { method: 'GET', pattern: /^\/api\/conversations\/([\w-]+)\/messages$/, handler: listMessages },
   { method: 'POST', pattern: /^\/api\/conversations\/([\w-]+)\/messages$/, handler: sendMessage },
   { method: 'POST', pattern: /^\/api\/conversations\/([\w-]+)\/read$/, handler: markRead },
@@ -871,10 +773,6 @@ const routes: Route[] = [
   { method: 'POST', pattern: /^\/api\/support$/, handler: createTicket },
   { method: 'GET', pattern: /^\/api\/support$/, handler: myTickets },
   { method: 'GET', pattern: /^\/api\/admin\/stats$/, handler: adminStats },
-  { method: 'GET', pattern: /^\/api\/admin\/settings$/, handler: adminGetSettings },
-  { method: 'PUT', pattern: /^\/api\/admin\/settings$/, handler: adminPutSettings },
-  { method: 'GET', pattern: /^\/api\/admin\/audit$/, handler: adminListAudit },
-  { method: 'GET', pattern: /^\/api\/settings$/, handler: getPublicSettings, public: true },
   { method: 'GET', pattern: /^\/api\/admin\/users$/, handler: adminListUsers },
   { method: 'PATCH', pattern: /^\/api\/admin\/users\/([\w-]+)$/, handler: adminPatchUser },
   { method: 'DELETE', pattern: /^\/api\/admin\/users\/([\w-]+)$/, handler: adminDeleteUser },

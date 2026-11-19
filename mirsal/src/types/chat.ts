@@ -16,6 +16,8 @@ export interface User {
   displayName: string;
   avatar: string;
   bio: string;
+  /** A short status line the person sets, e.g. "في العمل". */
+  statusText?: string;
   publicKey: string;
   online: boolean;
   lastSeen: string;
@@ -54,10 +56,6 @@ export interface Message {
   iv: string;
   status: DeliveryStatus;
   createdAt: string;
-  /** Set when the sender edited the message (ISO time of the last edit). */
-  editedAt?: string;
-  /** True when the message was deleted for everyone, or hidden for the current user. Its ciphertext is empty. */
-  deleted?: boolean;
   decrypted?: DecryptedMessagePayload;
 }
 

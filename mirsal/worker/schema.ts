@@ -94,21 +94,6 @@ export const SCHEMA: string[] = [
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
-  `CREATE TABLE IF NOT EXISTS admin_audit (
-    id TEXT PRIMARY KEY,
-    actor_id TEXT,
-    action TEXT NOT NULL,
-    target TEXT,
-    detail TEXT,
-    created_at TEXT NOT NULL
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_audit_time ON admin_audit(created_at)`,
-  `CREATE TABLE IF NOT EXISTS message_hidden (
-    message_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    hidden_at TEXT NOT NULL,
-    PRIMARY KEY (message_id, user_id)
-  )`,
 ];
 
 /** Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", so errors are ignored. */
@@ -116,9 +101,8 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN email TEXT`,
   `ALTER TABLE users ADD COLUMN uid TEXT`,
   `ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0`,
-  `ALTER TABLE users ADD COLUMN avatar_url TEXT`,
-  `ALTER TABLE messages ADD COLUMN edited_at TEXT`,
-  `ALTER TABLE messages ADD COLUMN deleted_at TEXT`,
+  `ALTER TABLE users ADD COLUMN avatar_data TEXT`,
+  `ALTER TABLE users ADD COLUMN status_text TEXT NOT NULL DEFAULT ''`,
 ];
 
 const INDEX_MIGRATIONS: string[] = [

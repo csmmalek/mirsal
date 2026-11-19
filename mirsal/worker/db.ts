@@ -12,16 +12,12 @@ import { makeAvatar } from './util';
 
 type Row = Record<string, unknown>;
 
-/** A user-uploaded photo is stored as a small data URI; anything else falls back to the generated initials avatar. */
-function customAvatar(v: unknown): string | null {
-  return typeof v === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(v) ? v : null;
-}
-
 /** `includeEmail` is only true for a user's own profile: emails are never shown to other people. */
 export function mapUser(row: Row, online: Set<string>, includeEmail = false): User {
   const id = String(row.id);
   const displayName = String(row.display_name);
   const uid = String(row.uid ?? row.username);
+  const avatarData = typeof row.avatar_data === 'string' && row.avatar_data.startsWith('data:image/') ? row.avatar_data : '';
   return {
     id,
     uid,
@@ -29,8 +25,9 @@ export function mapUser(row: Row, online: Set<string>, includeEmail = false): Us
     isAdmin: isAdminEmail(row.email),
     ...(includeEmail ? { email: String(row.email ?? '') } : {}),
     displayName,
-    avatar: customAvatar(row.avatar_url) ?? makeAvatar(displayName, id),
+    avatar: avatarData || makeAvatar(displayName, id),
     bio: String(row.bio ?? ''),
+    statusText: String(row.status_text ?? ''),
     publicKey: String(row.public_key),
     online: online.has(id),
     lastSeen: String(row.last_seen),
@@ -48,8 +45,6 @@ export function mapMessage(row: Row): Message {
     iv: String(row.iv),
     status: String(row.status) as DeliveryStatus,
     createdAt: String(row.created_at),
-    editedAt: row.edited_at ? String(row.edited_at) : undefined,
-    deleted: row.deleted_at || row.hidden_for_me ? true : undefined,
   };
 }
 
@@ -108,17 +103,15 @@ export async function getConversationsForUser(
       `SELECT c.*, cm.unread_count, cm.wrapped_key, cm.wrap_iv, cm.wrapped_by,
               m.id AS m_id, m.conversation_id AS m_conversation_id, m.sender_id AS m_sender_id,
               m.type AS m_type, m.ciphertext AS m_ciphertext, m.iv AS m_iv, m.status AS m_status,
-              m.created_at AS m_created_at, m.edited_at AS m_edited_at, m.deleted_at AS m_deleted_at,
-              mu.display_name AS m_sender_name, h.user_id AS m_hidden
+              m.created_at AS m_created_at, mu.display_name AS m_sender_name
        FROM conversations c
        JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = ?
        LEFT JOIN messages m ON m.id = c.last_message_id
        LEFT JOIN users mu ON mu.id = m.sender_id
-       LEFT JOIN message_hidden h ON h.message_id = m.id AND h.user_id = ?
        WHERE 1 = 1 ${filter}
        ORDER BY c.updated_at DESC`
     )
-    .bind(...(onlyId ? [userId, userId, onlyId] : [userId, userId]));
+    .bind(...(onlyId ? [userId, onlyId] : [userId]));
   const { results: convRows } = await convStmt.all<Row>();
   if (convRows.length === 0) return [];
 
@@ -167,9 +160,6 @@ export async function getConversationsForUser(
             iv: c.m_iv,
             status: c.m_status,
             created_at: c.m_created_at,
-            edited_at: c.m_edited_at,
-            deleted_at: c.m_deleted_at,
-            hidden_for_me: c.m_hidden,
           })
         : undefined,
       keyInfo: {

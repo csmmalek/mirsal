@@ -20,7 +20,7 @@ interface AuthGateProps {
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
 
 const inputCls =
-  'field-glass w-full min-h-[46px] px-3.5 py-2 rounded-xl text-sm text-slate-900 dark:text-slate-100';
+  'w-full min-h-[46px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[var(--d-bg)] text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500';
 const labelCls = 'block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5';
 
 export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) => {
@@ -92,7 +92,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) 
                     setMode(m);
                     setLocalError(null);
                   }}
-                  className={`btn-glass ${mode === m ? '' : 'btn-ghost'} flex-1 min-h-[44px] px-3 py-2 text-xs font-semibold rounded-lg`}
+                  className={`flex-1 min-h-[40px] px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                    mode === m
+                      ? 'bg-white dark:bg-[var(--d-surface2)] text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
                 >
                   {m === 'login' ? 'تسجيل الدخول' : 'حساب جديد'}
                 </button>
@@ -177,7 +181,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) 
               <button
                 type="submit"
                 disabled={loading}
-                className="btn-glass w-full min-h-[46px] px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
+                className="w-full min-h-[46px] px-4 py-2.5 rounded-xl btn-glass text-sm font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
               >
                 {mode === 'login' ? <LogIn className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
                 <span>{loading ? 'جاري تأمين الحساب...' : mode === 'login' ? 'دخول' : 'إنشاء الحساب'}</span>

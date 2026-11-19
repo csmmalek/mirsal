@@ -8,10 +8,6 @@ import { SidebarNav } from './components/SidebarNav';
 import { ChatInfoModal, DevicesModal, NewChatModal, NotificationsModal } from './components/SideModals';
 import { AdminModal, ProfileModal, SupportModal, ThemeModal } from './components/DevModals';
 import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
-import { createApi, errorMessage, readError } from './api/client';
-import { SettingsModal } from './components/SettingsModal';
-import { PublicSettings, StatusBanner } from './components/StatusBanner';
-import { ThemeMode } from './preferences';
 import type {
   ActiveCallState,
   Conversation,
@@ -97,26 +93,12 @@ export default function App() {
   const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
 
   const [activeModal, setActiveModal] = useState<
-    null | 'new_chat' | 'devices' | 'notifications' | 'chat_info' | 'profile' | 'themes' | 'settings' | 'support' | 'admin'
+    null | 'new_chat' | 'devices' | 'notifications' | 'chat_info' | 'profile' | 'themes' | 'support' | 'admin'
   >(null);
   const [chatFingerprint, setChatFingerprint] = useState('');
   const [toastNotification, setToastNotification] = useState<PushNotificationItem | null>(null);
 
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const v = localStorage.getItem(LS.theme);
-    return v === 'light' || v === 'auto' ? v : 'dark';
-  });
-  const [systemDark, setSystemDark] = useState(() =>
-    typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : true
-  );
-  const darkMode = themeMode === 'auto' ? systemDark : themeMode === 'dark';
-  const setDarkMode = useCallback((next: boolean | ((d: boolean) => boolean)) => {
-    setThemeMode((prev) => {
-      const cur = prev === 'auto' ? systemDark : prev === 'dark';
-      const v = typeof next === 'function' ? next(cur) : next;
-      return v ? 'dark' : 'light';
-    });
-  }, [systemDark]);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem(LS.theme) !== 'light');
   const [colorTheme, setColorTheme] = useState(() => {
     const saved = localStorage.getItem(LS.color);
     return THEMES.some((t) => t.id === saved) ? (saved as string) : DEFAULT_THEME;
@@ -158,52 +140,14 @@ export default function App() {
   soundRef.current = soundEnabled;
 
   useEffect(() => {
-    if (!window.matchMedia) return;
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-
-  useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
-    localStorage.setItem(LS.theme, themeMode);
-  }, [darkMode, themeMode]);
+    localStorage.setItem(LS.theme, darkMode ? 'dark' : 'light');
+  }, [darkMode]);
 
   useEffect(() => {
     applyTheme(colorTheme);
     localStorage.setItem(LS.color, colorTheme);
   }, [colorTheme]);
-
-  const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const res = await fetch('/api/settings');
-        if (res.ok && alive) setPublicSettings((await res.json()) as PublicSettings);
-      } catch {
-        /* offline: keep the last known settings */
-      }
-    };
-    void load();
-    const t = window.setInterval(load, 60_000);
-    return () => {
-      alive = false;
-      window.clearInterval(t);
-    };
-  }, []);
-
-  /** ثيم «فاتح» (مثل لؤلؤ) يفرض الوضع الفاتح؛ غيره يترك الوضع كما اختاره المستخدم. */
-  const pickColorTheme = useCallback(
-    (id: string) => {
-      const t = THEMES.find((x) => x.id === id);
-      if (t?.light) setThemeMode('light');
-      else if (t && themeMode === 'light' && colorTheme === 'pearl') setThemeMode('dark');
-      setColorTheme(id);
-    },
-    [colorTheme, themeMode]
-  );
 
   /* ------------------------------- session ------------------------------- */
 
@@ -223,8 +167,19 @@ export default function App() {
     setActiveCall(null);
   }, []);
 
-  const api = useMemo(
-    () => createApi({ getToken: () => tokenRef.current, onUnauthorized: clearSession }),
+  const api = useCallback(
+    async (path: string, init: RequestInit = {}): Promise<Response> => {
+      const res = await fetch(path, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : {}),
+          ...(init.headers as Record<string, string> | undefined),
+        },
+      });
+      if (res.status === 401 && tokenRef.current && !path.startsWith('/api/auth/')) clearSession();
+      return res;
+    },
     [clearSession]
   );
 
@@ -251,7 +206,6 @@ export default function App() {
 
   const decryptMessage = useCallback(
     async (msg: Message): Promise<Message> => {
-      if (msg.deleted) return { ...msg, decrypted: { text: '' } };
       try {
         const key = await getConversationKey(msg.conversationId);
         return { ...msg, decrypted: await decryptMessagePayload(msg.ciphertext, msg.iv, key) };
@@ -422,9 +376,9 @@ export default function App() {
   }, []);
 
   const sendMessageTo = useCallback(
-    async (convId: string, type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
+    async (convId: string, type: MessageType, payload: DecryptedMessagePayload) => {
       const user = currentUserRef.current;
-      if (!user) return false;
+      if (!user) return;
       const id = newMsgId();
       const createdAt = new Date().toISOString();
       const setStatus = (status: Message['status']) =>
@@ -439,8 +393,8 @@ export default function App() {
         const key = await getConversationKey(convId);
         ({ ciphertext, iv } = await encryptMessagePayload(payload, key));
       } catch {
-        // تعذّر التشفير (مفتاح المحادثة غير متاح): لا نُظهر رسالة وهمية، ويحتفظ الحقل بالنص ليعيد المستخدم المحاولة.
-        return false;
+        // No message was created, so tell the caller (the composer restores the draft).
+        throw new Error('encrypt-failed');
       }
 
       const optimistic: Message = {
@@ -460,102 +414,45 @@ export default function App() {
         prev.map((c) => (c.id === convId ? { ...c, updatedAt: createdAt, lastMessage: optimistic } : c))
       );
 
-      // الرسالة ظاهرة الآن (حالة «جارٍ الإرسال»)؛ التسليم للخادم يكمل في الخلفية دون حجب الواجهة.
-      void (async () => {
-        try {
-          const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
-            method: 'POST',
-            body: JSON.stringify({ id, type, ciphertext, iv }),
-          });
-          if (!res.ok) throw new Error(String(res.status));
-          const { message } = (await res.json()) as { message: Message };
-          // Never downgrade: the realtime echo may already have marked it delivered/read.
-          setMessagesByConv((prev) => ({
-            ...prev,
-            [convId]: (prev[convId] || []).map((m) =>
-              m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
-            ),
-          }));
-        } catch {
-          setStatus('failed');
-        }
-      })();
-      return true;
+      try {
+        const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ id, type, ciphertext, iv }),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const { message } = (await res.json()) as { message: Message };
+        // Never downgrade: the realtime echo may already have marked it delivered/read.
+        setMessagesByConv((prev) => ({
+          ...prev,
+          [convId]: (prev[convId] || []).map((m) =>
+            m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+          ),
+        }));
+      } catch {
+        setStatus('failed');
+      }
     },
     [api, getConversationKey]
   );
 
   const handleSendMessage = useCallback(
-    async (type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
-      if (!activeConvIdRef.current) return false;
-      return sendMessageTo(activeConvIdRef.current, type, payload);
+    async (type: MessageType, payload: DecryptedMessagePayload) => {
+      if (activeConvIdRef.current) await sendMessageTo(activeConvIdRef.current, type, payload);
     },
     [sendMessageTo]
   );
 
-  /** تحديث رسالة في الحالة المحلية وفي معاينة المحادثة إن كانت آخر رسالة. */
-  const patchMessage = useCallback((convId: string, messageId: string, patch: (m: Message) => Message) => {
-    setMessagesByConv((prev) => ({
-      ...prev,
-      [convId]: (prev[convId] || []).map((m) => (m.id === messageId ? patch(m) : m)),
-    }));
-    setConversations((prev) =>
-      prev.map((c) => (c.id === convId && c.lastMessage?.id === messageId ? { ...c, lastMessage: patch(c.lastMessage) } : c))
-    );
-  }, []);
-
-  /** تعديل نص رسالة: يُعاد تشفيرها بالمفتاح نفسه، وتبقى بيانات الرد كما هي. */
-  const handleEditMessage = useCallback(
-    async (msg: Message, newText: string): Promise<string | null> => {
-      const text = newText.trim();
-      if (!text) return 'لا يمكن أن تكون الرسالة فارغة';
-      try {
-        const key = await getConversationKey(msg.conversationId);
-        const payload: DecryptedMessagePayload = { ...(msg.decrypted ?? {}), text };
-        const { ciphertext, iv } = await encryptMessagePayload(payload, key);
-        const res = await api(`/api/messages/${encodeURIComponent(msg.id)}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ ciphertext, iv }),
-        });
-        if (!res.ok) return await readError(res, 'تعذر تعديل الرسالة');
-        const { message } = (await res.json()) as { message: Message };
-        patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, ciphertext, iv, editedAt: message.editedAt, decrypted: payload }));
-        return null;
-      } catch (err) {
-        return errorMessage(err, 'تعذر تعديل الرسالة');
-      }
-    },
-    [api, getConversationKey, patchMessage]
-  );
-
-  /** حذف رسالة: «لي» يخفيها عندي فقط، و«للجميع» يمسح محتواها عند الجميع. يعيد نص الخطأ أو null. */
-  const handleDeleteMessage = useCallback(
-    async (msg: Message, scope: 'me' | 'all'): Promise<string | null> => {
-      try {
-        const res = await api(`/api/messages/${encodeURIComponent(msg.id)}?scope=${scope}`, { method: 'DELETE' });
-        if (!res.ok) return await readError(res, 'تعذر حذف الرسالة');
-        if (scope === 'me') {
-          setMessagesByConv((prev) => ({ ...prev, [msg.conversationId]: (prev[msg.conversationId] || []).filter((m) => m.id !== msg.id) }));
-          patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, deleted: true, decrypted: { text: '' } }));
-        } else {
-          patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, deleted: true, ciphertext: '', iv: '', decrypted: { text: '' } }));
-        }
-        return null;
-      } catch (err) {
-        return errorMessage(err, 'تعذر حذف الرسالة');
-      }
-    },
-    [api, patchMessage]
-  );
-
-  /** إعادة إرسال رسالة فشلت: نفس المعرّف، والخادم يتجاهل التكرار فلا تصل نسختان. */
-  const handleRetryMessage = useCallback(
-    async (msg: Message) => {
-      const convId = msg.conversationId;
+  /** Re-sends a message that failed on the network, reusing its stored ciphertext. */
+  const retryMessage = useCallback(
+    async (msgId: string) => {
+      const convId = activeConvIdRef.current;
+      if (!convId) return;
+      const msg = (messagesByConv[convId] || []).find((m) => m.id === msgId && m.status === 'failed');
+      if (!msg) return;
       const setStatus = (status: Message['status']) =>
         setMessagesByConv((prev) => ({
           ...prev,
-          [convId]: (prev[convId] || []).map((m) => (m.id === msg.id ? { ...m, status } : m)),
+          [convId]: (prev[convId] || []).map((m) => (m.id === msgId ? { ...m, status } : m)),
         }));
       setStatus('sending');
       try {
@@ -568,14 +465,14 @@ export default function App() {
         setMessagesByConv((prev) => ({
           ...prev,
           [convId]: (prev[convId] || []).map((m) =>
-            m.id === msg.id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            m.id === msgId && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
           ),
         }));
       } catch {
         setStatus('failed');
       }
     },
-    [api]
+    [api, messagesByConv]
   );
 
   /** Ends local call state; the caller's device writes the call record into the chat. */
@@ -595,6 +492,8 @@ export default function App() {
           callKind: call.kind,
           callOutcome: result,
           durationSec: duration,
+        }).catch(() => {
+          /* the call record is best-effort */
         });
       }
     },
@@ -852,27 +751,6 @@ export default function App() {
           return;
         }
 
-        if (evType === 'message:edited') {
-          const raw = data.message as Message;
-          if (!raw) return;
-          const dec = await decryptMessage(raw);
-          patchMessage(dec.conversationId, dec.id, (m) => ({ ...m, ciphertext: dec.ciphertext, iv: dec.iv, editedAt: dec.editedAt, decrypted: dec.decrypted }));
-          return;
-        }
-        if (evType === 'message:deleted') {
-          const convId = String(data.conversationId || '');
-          const id = String(data.messageId || '');
-          patchMessage(convId, id, (m) => ({ ...m, deleted: true, ciphertext: '', iv: '', decrypted: { text: '' } }));
-          return;
-        }
-        if (evType === 'message:hidden') {
-          const convId = String(data.conversationId || '');
-          const id = String(data.messageId || '');
-          setMessagesByConv((prev) => ({ ...prev, [convId]: (prev[convId] || []).filter((m) => m.id !== id) }));
-          patchMessage(convId, id, (m) => ({ ...m, deleted: true, decrypted: { text: '' } }));
-          return;
-        }
-
         if (evType === 'message:read_receipt') {
           const convId = String(data.conversationId || '');
           if (String(data.readerId) !== me.id) {
@@ -997,7 +875,7 @@ export default function App() {
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
       wsRef.current?.close();
     };
-  }, [currentUser?.id, api, clearSession, cleanupWebRtc, decryptMessage, patchMessage, loadMessagesForConversation, loadWorkspaceData, wsSend]);
+  }, [currentUser?.id, api, clearSession, cleanupWebRtc, decryptMessage, loadMessagesForConversation, loadWorkspaceData, wsSend]);
 
   const handleTyping = useCallback(
     (isTyping: boolean) => {
@@ -1064,8 +942,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell w-full overflow-hidden flex bg-[#F4F6F8] dark:bg-[var(--d-bg)] text-slate-900 dark:text-slate-100">
-      <StatusBanner settings={publicSettings} />
+    <div className="h-screen w-full overflow-hidden flex bg-[#F4F6F8] dark:bg-[var(--d-bg)] text-slate-900 dark:text-slate-100">
       {/* Navigation Rail (Right side in RTL) */}
       <SidebarNav
         currentUser={currentUser}
@@ -1077,7 +954,6 @@ export default function App() {
         onOpenDevices={() => setActiveModal('devices')}
         onOpenProfile={() => setActiveModal('profile')}
         onOpenThemes={() => setActiveModal('themes')}
-        onOpenSettings={() => setActiveModal('settings')}
         onOpenSupport={() => setActiveModal('support')}
         onOpenAdmin={() => setActiveModal('admin')}
         onLogout={() => {
@@ -1121,9 +997,7 @@ export default function App() {
           typingUsers={activeConversationId ? typingByConv[activeConversationId] || [] : []}
           onBackMobile={() => setMobileView('list')}
           onSendMessage={handleSendMessage}
-          onRetryMessage={handleRetryMessage}
-          onEditMessage={handleEditMessage}
-          onDeleteMessage={handleDeleteMessage}
+          onRetry={retryMessage}
           onTyping={handleTyping}
           onStartCall={handleStartCall}
           onOpenChatInfo={() => setActiveModal('chat_info')}
@@ -1188,12 +1062,11 @@ export default function App() {
         <ProfileModal
           user={currentUser}
           api={api}
-          onUserChange={setCurrentUser}
+          onUpdated={setCurrentUser}
           onClose={() => setActiveModal(null)}
           onOpenDevices={() => setActiveModal('devices')}
           onOpenSupport={() => setActiveModal('support')}
           onOpenThemes={() => setActiveModal('themes')}
-          onOpenSettings={() => setActiveModal('settings')}
           onOpenAdmin={() => setActiveModal('admin')}
           onLogout={() => {
             setActiveModal(null);
@@ -1202,27 +1075,7 @@ export default function App() {
         />
       )}
       {activeModal === 'themes' && (
-        <ThemeModal current={colorTheme} onApply={pickColorTheme} onClose={() => setActiveModal(null)} />
-      )}
-      {activeModal === 'settings' && (
-        <SettingsModal
-          themeMode={themeMode}
-          onThemeMode={setThemeMode}
-          colorTheme={colorTheme}
-          onColorTheme={pickColorTheme}
-          soundEnabled={soundEnabled}
-          onToggleSound={() => setSoundEnabled((v) => !v)}
-          browserPermission={browserPermission}
-          onRequestBrowserPermission={async () => {
-            if (typeof Notification !== 'undefined') setBrowserPermission(await Notification.requestPermission());
-          }}
-          onOpenProfile={() => setActiveModal('profile')}
-          onLogout={() => {
-            setActiveModal(null);
-            api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined).finally(clearSession);
-          }}
-          onClose={() => setActiveModal(null)}
-        />
+        <ThemeModal current={colorTheme} onApply={setColorTheme} onClose={() => setActiveModal(null)} />
       )}
       {activeModal === 'support' && <SupportModal api={api} onClose={() => setActiveModal(null)} />}
       {activeModal === 'admin' && currentUser.isAdmin && <AdminModal api={api} onClose={() => setActiveModal(null)} />}
