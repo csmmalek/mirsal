@@ -34,6 +34,8 @@ jobs:
           java-version: 17
 
       - name: Install Android SDK packages
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         run: |
           SDKM="$(command -v sdkmanager || true)"
           if [ -z "$SDKM" ]; then SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"; fi
