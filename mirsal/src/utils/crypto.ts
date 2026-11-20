@@ -136,6 +136,25 @@ export async function unwrapConversationKey(
   return importConversationKey(new Uint8Array(raw));
 }
 
+/**
+ * Opens the wrapped conversation key and returns its raw bytes. Used only when an existing member re-wraps the
+ * key for someone newly added to a group; the bytes are never stored (the cached CryptoKey stays non-extractable).
+ */
+export async function unwrapConversationKeyRaw(
+  wrappedKey: string,
+  iv: string,
+  myPrivateJwk: string,
+  wrapperPublicJwk: string
+): Promise<Uint8Array> {
+  const k = await sharedWrapKey(myPrivateJwk, wrapperPublicJwk);
+  const raw = await subtle().decrypt(
+    { name: 'AES-GCM', iv: base64ToBytes(iv) as BufferSource },
+    k,
+    base64ToBytes(wrappedKey) as BufferSource
+  );
+  return new Uint8Array(raw);
+}
+
 export function importConversationKey(raw: Uint8Array): Promise<CryptoKey> {
   return subtle().importKey('raw', raw as BufferSource, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }

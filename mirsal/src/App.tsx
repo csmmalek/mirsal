@@ -5,9 +5,17 @@ import { CallOverlay } from './components/CallOverlay';
 import { ChatWorkspace } from './components/ChatWorkspace';
 import { ConversationList } from './components/ConversationList';
 import { SidebarNav } from './components/SidebarNav';
-import { ChatInfoModal, DevicesModal, NewChatModal, NotificationsModal } from './components/SideModals';
-import { AdminModal, ProfileModal, SupportModal, ThemeModal } from './components/DevModals';
+import { DevicesModal, NewChatModal, NotificationsModal } from './components/SideModals';
+import { AdminModal, ProfileModal, SupportModal } from './components/DevModals';
+import { ChatInfoModal, ChatInfoActions } from './components/ChatInfoModal';
 import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
+import { createApi, errorMessage, readError } from './api/client';
+import type { StatusFeed } from './types/chat';
+import { SettingsModal } from './components/SettingsModal';
+import { StatusComposer, StatusPanel, StatusViewer } from './components/StatusPanel';
+import type { AppSection } from './components/SidebarNav';
+import { PublicSettings, StatusBanner } from './components/StatusBanner';
+import { ThemeMode } from './preferences';
 import type {
   ActiveCallState,
   Conversation,
@@ -26,6 +34,7 @@ import {
   encryptMessagePayload,
   generateConversationKeyBytes,
   generateIdentityKeyPair,
+  unwrapConversationKeyRaw,
   importConversationKey,
   unwrapConversationKey,
   unwrapPrivateKey,
@@ -91,14 +100,33 @@ export default function App() {
   const [filter, setFilter] = useState<ConversationFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
+  const [section, setSection] = useState<AppSection>('chats');
+  const [statusFeed, setStatusFeed] = useState<StatusFeed>({ mine: [], groups: [] });
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusViewer, setStatusViewer] = useState<null | { kind: 'mine' } | { kind: 'group'; index: number }>(null);
+  const [statusComposer, setStatusComposer] = useState(false);
 
   const [activeModal, setActiveModal] = useState<
-    null | 'new_chat' | 'devices' | 'notifications' | 'chat_info' | 'profile' | 'themes' | 'support' | 'admin'
+    null | 'new_chat' | 'devices' | 'notifications' | 'chat_info' | 'profile' | 'themes' | 'settings' | 'support' | 'admin'
   >(null);
   const [chatFingerprint, setChatFingerprint] = useState('');
   const [toastNotification, setToastNotification] = useState<PushNotificationItem | null>(null);
 
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem(LS.theme) !== 'light');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const v = localStorage.getItem(LS.theme);
+    return v === 'light' || v === 'auto' ? v : 'dark';
+  });
+  const [systemDark, setSystemDark] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : true
+  );
+  const darkMode = themeMode === 'auto' ? systemDark : themeMode === 'dark';
+  const setDarkMode = useCallback((next: boolean | ((d: boolean) => boolean)) => {
+    setThemeMode((prev) => {
+      const cur = prev === 'auto' ? systemDark : prev === 'dark';
+      const v = typeof next === 'function' ? next(cur) : next;
+      return v ? 'dark' : 'light';
+    });
+  }, [systemDark]);
   const [colorTheme, setColorTheme] = useState(() => {
     const saved = localStorage.getItem(LS.color);
     return THEMES.some((t) => t.id === saved) ? (saved as string) : DEFAULT_THEME;
@@ -140,14 +168,52 @@ export default function App() {
   soundRef.current = soundEnabled;
 
   useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
-    localStorage.setItem(LS.theme, darkMode ? 'dark' : 'light');
-  }, [darkMode]);
+    localStorage.setItem(LS.theme, themeMode);
+  }, [darkMode, themeMode]);
 
   useEffect(() => {
     applyTheme(colorTheme);
     localStorage.setItem(LS.color, colorTheme);
   }, [colorTheme]);
+
+  const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/settings');
+        if (res.ok && alive) setPublicSettings((await res.json()) as PublicSettings);
+      } catch {
+        /* offline: keep the last known settings */
+      }
+    };
+    void load();
+    const t = window.setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+    };
+  }, []);
+
+  /** ثيم «فاتح» (مثل لؤلؤ) يفرض الوضع الفاتح؛ غيره يترك الوضع كما اختاره المستخدم. */
+  const pickColorTheme = useCallback(
+    (id: string) => {
+      const t = THEMES.find((x) => x.id === id);
+      if (t?.light) setThemeMode('light');
+      else if (t && themeMode === 'light' && colorTheme === 'pearl') setThemeMode('dark');
+      setColorTheme(id);
+    },
+    [colorTheme, themeMode]
+  );
 
   /* ------------------------------- session ------------------------------- */
 
@@ -167,19 +233,8 @@ export default function App() {
     setActiveCall(null);
   }, []);
 
-  const api = useCallback(
-    async (path: string, init: RequestInit = {}): Promise<Response> => {
-      const res = await fetch(path, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : {}),
-          ...(init.headers as Record<string, string> | undefined),
-        },
-      });
-      if (res.status === 401 && tokenRef.current && !path.startsWith('/api/auth/')) clearSession();
-      return res;
-    },
+  const api = useMemo(
+    () => createApi({ getToken: () => tokenRef.current, onUnauthorized: clearSession }),
     [clearSession]
   );
 
@@ -206,6 +261,7 @@ export default function App() {
 
   const decryptMessage = useCallback(
     async (msg: Message): Promise<Message> => {
+      if (msg.deleted) return { ...msg, decrypted: { text: '' } };
       try {
         const key = await getConversationKey(msg.conversationId);
         return { ...msg, decrypted: await decryptMessagePayload(msg.ciphertext, msg.iv, key) };
@@ -279,6 +335,7 @@ export default function App() {
               email: p.email,
               setupCode: p.setupCode,
               displayName: p.displayName,
+              handle: p.handle,
               authSecret,
               publicKey: kp.publicKeyJwk,
               encryptedPrivateKey: wrapped.ciphertext,
@@ -376,9 +433,9 @@ export default function App() {
   }, []);
 
   const sendMessageTo = useCallback(
-    async (convId: string, type: MessageType, payload: DecryptedMessagePayload) => {
+    async (convId: string, type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
       const user = currentUserRef.current;
-      if (!user) return;
+      if (!user) return false;
       const id = newMsgId();
       const createdAt = new Date().toISOString();
       const setStatus = (status: Message['status']) =>
@@ -393,8 +450,8 @@ export default function App() {
         const key = await getConversationKey(convId);
         ({ ciphertext, iv } = await encryptMessagePayload(payload, key));
       } catch {
-        // No message was created, so tell the caller (the composer restores the draft).
-        throw new Error('encrypt-failed');
+        // تعذّر التشفير (مفتاح المحادثة غير متاح): لا نُظهر رسالة وهمية، ويحتفظ الحقل بالنص ليعيد المستخدم المحاولة.
+        return false;
       }
 
       const optimistic: Message = {
@@ -414,45 +471,140 @@ export default function App() {
         prev.map((c) => (c.id === convId ? { ...c, updatedAt: createdAt, lastMessage: optimistic } : c))
       );
 
-      try {
-        const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
-          method: 'POST',
-          body: JSON.stringify({ id, type, ciphertext, iv }),
-        });
-        if (!res.ok) throw new Error(String(res.status));
-        const { message } = (await res.json()) as { message: Message };
-        // Never downgrade: the realtime echo may already have marked it delivered/read.
-        setMessagesByConv((prev) => ({
-          ...prev,
-          [convId]: (prev[convId] || []).map((m) =>
-            m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
-          ),
-        }));
-      } catch {
-        setStatus('failed');
-      }
+      // الرسالة ظاهرة الآن (حالة «جارٍ الإرسال»)؛ التسليم للخادم يكمل في الخلفية دون حجب الواجهة.
+      void (async () => {
+        try {
+          const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ id, type, ciphertext, iv }),
+          });
+          if (!res.ok) throw new Error(String(res.status));
+          const { message } = (await res.json()) as { message: Message };
+          // Never downgrade: the realtime echo may already have marked it delivered/read.
+          setMessagesByConv((prev) => ({
+            ...prev,
+            [convId]: (prev[convId] || []).map((m) =>
+              m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            ),
+          }));
+        } catch {
+          setStatus('failed');
+        }
+      })();
+      return true;
     },
     [api, getConversationKey]
   );
 
   const handleSendMessage = useCallback(
-    async (type: MessageType, payload: DecryptedMessagePayload) => {
-      if (activeConvIdRef.current) await sendMessageTo(activeConvIdRef.current, type, payload);
+    async (type: MessageType, payload: DecryptedMessagePayload): Promise<boolean> => {
+      if (!activeConvIdRef.current) return false;
+      return sendMessageTo(activeConvIdRef.current, type, payload);
     },
     [sendMessageTo]
   );
 
-  /** Re-sends a message that failed on the network, reusing its stored ciphertext. */
-  const retryMessage = useCallback(
-    async (msgId: string) => {
-      const convId = activeConvIdRef.current;
-      if (!convId) return;
-      const msg = (messagesByConv[convId] || []).find((m) => m.id === msgId && m.status === 'failed');
-      if (!msg) return;
+  /* ------------------------------ statuses ------------------------------ */
+  const loadStatuses = useCallback(async () => {
+    try {
+      const res = await api('/api/statuses');
+      if (res.ok) setStatusFeed((await res.json()) as StatusFeed);
+    } catch {
+      /* offline: keep the last feed */
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [api]);
+  const loadStatusesRef = useRef(loadStatuses);
+  loadStatusesRef.current = loadStatuses;
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    setStatusLoading(true);
+    void loadStatuses();
+  }, [currentUser?.id, loadStatuses]);
+
+  /** خريطة الحلقة الخضراء: معرّف المستخدم ← جديدة / مشاهدة. */
+  const statusRing = useMemo(() => {
+    const m: Record<string, 'new' | 'seen'> = {};
+    for (const g of statusFeed.groups) m[g.user.id] = g.allViewed ? 'seen' : 'new';
+    return m;
+  }, [statusFeed.groups]);
+  const statusUnseen = statusFeed.groups.filter((g) => !g.allViewed).length;
+
+  const markStatusViewed = useCallback((statusId: string) => {
+    setStatusFeed((prev) => ({
+      ...prev,
+      groups: prev.groups.map((g) => {
+        const statuses = g.statuses.map((s) => (s.id === statusId ? { ...s, viewed: true } : s));
+        return { ...g, statuses, allViewed: statuses.every((s) => s.viewed) };
+      }),
+    }));
+  }, []);
+
+  /** تحديث رسالة في الحالة المحلية وفي معاينة المحادثة إن كانت آخر رسالة. */
+  const patchMessage = useCallback((convId: string, messageId: string, patch: (m: Message) => Message) => {
+    setMessagesByConv((prev) => ({
+      ...prev,
+      [convId]: (prev[convId] || []).map((m) => (m.id === messageId ? patch(m) : m)),
+    }));
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convId && c.lastMessage?.id === messageId ? { ...c, lastMessage: patch(c.lastMessage) } : c))
+    );
+  }, []);
+
+  /** تعديل نص رسالة: يُعاد تشفيرها بالمفتاح نفسه، وتبقى بيانات الرد كما هي. */
+  const handleEditMessage = useCallback(
+    async (msg: Message, newText: string): Promise<string | null> => {
+      const text = newText.trim();
+      if (!text) return 'لا يمكن أن تكون الرسالة فارغة';
+      try {
+        const key = await getConversationKey(msg.conversationId);
+        const payload: DecryptedMessagePayload = { ...(msg.decrypted ?? {}), text };
+        const { ciphertext, iv } = await encryptMessagePayload(payload, key);
+        const res = await api(`/api/messages/${encodeURIComponent(msg.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ ciphertext, iv }),
+        });
+        if (!res.ok) return await readError(res, 'تعذر تعديل الرسالة');
+        const { message } = (await res.json()) as { message: Message };
+        patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, ciphertext, iv, editedAt: message.editedAt, decrypted: payload }));
+        return null;
+      } catch (err) {
+        return errorMessage(err, 'تعذر تعديل الرسالة');
+      }
+    },
+    [api, getConversationKey, patchMessage]
+  );
+
+  /** حذف رسالة: «لي» يخفيها عندي فقط، و«للجميع» يمسح محتواها عند الجميع. يعيد نص الخطأ أو null. */
+  const handleDeleteMessage = useCallback(
+    async (msg: Message, scope: 'me' | 'all'): Promise<string | null> => {
+      try {
+        const res = await api(`/api/messages/${encodeURIComponent(msg.id)}?scope=${scope}`, { method: 'DELETE' });
+        if (!res.ok) return await readError(res, 'تعذر حذف الرسالة');
+        if (scope === 'me') {
+          setMessagesByConv((prev) => ({ ...prev, [msg.conversationId]: (prev[msg.conversationId] || []).filter((m) => m.id !== msg.id) }));
+          patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, deleted: true, decrypted: { text: '' } }));
+        } else {
+          patchMessage(msg.conversationId, msg.id, (m) => ({ ...m, deleted: true, ciphertext: '', iv: '', decrypted: { text: '' } }));
+        }
+        return null;
+      } catch (err) {
+        return errorMessage(err, 'تعذر حذف الرسالة');
+      }
+    },
+    [api, patchMessage]
+  );
+
+  /** إعادة إرسال رسالة فشلت: نفس المعرّف، والخادم يتجاهل التكرار فلا تصل نسختان. */
+  const handleRetryMessage = useCallback(
+    async (msg: Message) => {
+      const convId = msg.conversationId;
       const setStatus = (status: Message['status']) =>
         setMessagesByConv((prev) => ({
           ...prev,
-          [convId]: (prev[convId] || []).map((m) => (m.id === msgId ? { ...m, status } : m)),
+          [convId]: (prev[convId] || []).map((m) => (m.id === msg.id ? { ...m, status } : m)),
         }));
       setStatus('sending');
       try {
@@ -465,14 +617,14 @@ export default function App() {
         setMessagesByConv((prev) => ({
           ...prev,
           [convId]: (prev[convId] || []).map((m) =>
-            m.id === msgId && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            m.id === msg.id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
           ),
         }));
       } catch {
         setStatus('failed');
       }
     },
-    [api, messagesByConv]
+    [api]
   );
 
   /** Ends local call state; the caller's device writes the call record into the chat. */
@@ -492,8 +644,6 @@ export default function App() {
           callKind: call.kind,
           callOutcome: result,
           durationSec: duration,
-        }).catch(() => {
-          /* the call record is best-effort */
         });
       }
     },
@@ -714,6 +864,23 @@ export default function App() {
           loadWorkspaceData();
           return;
         }
+        if (evType === 'status:updated') {
+          loadStatusesRef.current();
+          return;
+        }
+        if (evType === 'conversation:removed') {
+          const removedId = String(data.conversationId || '');
+          setConversations((prev) => prev.filter((c) => c.id !== removedId));
+          setMessagesByConv((prev) => {
+            const { [removedId]: _gone, ...rest } = prev;
+            return rest;
+          });
+          if (activeConvIdRef.current === removedId) {
+            setActiveConversationId(null);
+            setMobileView('list');
+          }
+          return;
+        }
 
         if (evType === 'message:new') {
           const rawMsg = data.message as Message;
@@ -748,6 +915,27 @@ export default function App() {
               () => undefined
             );
           }
+          return;
+        }
+
+        if (evType === 'message:edited') {
+          const raw = data.message as Message;
+          if (!raw) return;
+          const dec = await decryptMessage(raw);
+          patchMessage(dec.conversationId, dec.id, (m) => ({ ...m, ciphertext: dec.ciphertext, iv: dec.iv, editedAt: dec.editedAt, decrypted: dec.decrypted }));
+          return;
+        }
+        if (evType === 'message:deleted') {
+          const convId = String(data.conversationId || '');
+          const id = String(data.messageId || '');
+          patchMessage(convId, id, (m) => ({ ...m, deleted: true, ciphertext: '', iv: '', decrypted: { text: '' } }));
+          return;
+        }
+        if (evType === 'message:hidden') {
+          const convId = String(data.conversationId || '');
+          const id = String(data.messageId || '');
+          setMessagesByConv((prev) => ({ ...prev, [convId]: (prev[convId] || []).filter((m) => m.id !== id) }));
+          patchMessage(convId, id, (m) => ({ ...m, deleted: true, decrypted: { text: '' } }));
           return;
         }
 
@@ -875,7 +1063,7 @@ export default function App() {
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
       wsRef.current?.close();
     };
-  }, [currentUser?.id, api, clearSession, cleanupWebRtc, decryptMessage, loadMessagesForConversation, loadWorkspaceData, wsSend]);
+  }, [currentUser?.id, api, clearSession, cleanupWebRtc, decryptMessage, patchMessage, loadMessagesForConversation, loadWorkspaceData, wsSend]);
 
   const handleTyping = useCallback(
     (isTyping: boolean) => {
@@ -917,6 +1105,88 @@ export default function App() {
     [api, loadWorkspaceData]
   );
 
+  /* ---------------------- group & chat management ---------------------- */
+  const dropConversationLocally = useCallback((convId: string) => {
+    setConversations((prev) => prev.filter((c) => c.id !== convId));
+    setMessagesByConv((prev) => {
+      const { [convId]: _gone, ...rest } = prev;
+      return rest;
+    });
+    convKeysRef.current.delete(convId);
+    if (activeConvIdRef.current === convId) {
+      setActiveConversationId(null);
+      setMobileView('list');
+    }
+  }, []);
+
+  /** ينفّذ طلباً ويعيد نص الخطأ أو null. */
+  const call = useCallback(
+    async (path: string, init: RequestInit, fallback: string): Promise<string | null> => {
+      try {
+        const res = await api(path, init);
+        if (!res.ok) return await readError(res, fallback);
+        return null;
+      } catch (err) {
+        return errorMessage(err, fallback);
+      }
+    },
+    [api]
+  );
+
+  const makeChatActions = useCallback(
+    (conv: Conversation): ChatInfoActions => {
+      const base = `/api/conversations/${encodeURIComponent(conv.id)}`;
+      const refresh = async (err: string | null) => {
+        if (!err) await loadWorkspaceData();
+        return err;
+      };
+      return {
+        rename: async (title) => refresh(await call(base, { method: 'PATCH', body: JSON.stringify({ title }) }, 'تعذر تغيير الاسم')),
+        addMembers: async (users) => {
+          try {
+            const priv = privRef.current;
+            const wrapper = conv.members.find((m) => m.id === conv.keyInfo.wrappedBy);
+            if (!priv || !wrapper) return 'مفاتيح التشفير غير جاهزة، أعد تحميل التطبيق';
+            const raw = await unwrapConversationKeyRaw(conv.keyInfo.wrappedKey, conv.keyInfo.iv, priv, wrapper.publicKey);
+            const members = await Promise.all(users.map(async (u) => ({ userId: u.id, ...(await wrapConversationKey(raw, priv, u.publicKey)) })));
+            return refresh(await call(`${base}/members`, { method: 'POST', body: JSON.stringify({ members }) }, 'تعذر إضافة الأعضاء'));
+          } catch (err) {
+            return errorMessage(err, 'تعذر إضافة الأعضاء');
+          }
+        },
+        removeMember: async (userId) => refresh(await call(`${base}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }, 'تعذر إزالة العضو')),
+        setRole: async (userId, role) =>
+          refresh(await call(`${base}/members/${encodeURIComponent(userId)}`, { method: 'PATCH', body: JSON.stringify({ role }) }, 'تعذر تغيير الصلاحية')),
+        leave: async () => {
+          const err = await call(`${base}/leave`, { method: 'POST', body: '{}' }, 'تعذرت المغادرة');
+          if (!err) dropConversationLocally(conv.id);
+          return err;
+        },
+        deleteForAll: async () => {
+          const err = await call(`${base}?scope=all`, { method: 'DELETE' }, 'تعذر حذف المجموعة');
+          if (!err) dropConversationLocally(conv.id);
+          return err;
+        },
+        clearForMe: async () => {
+          const err = await call(`${base}?scope=me`, { method: 'DELETE' }, 'تعذر مسح المحادثة');
+          if (!err) dropConversationLocally(conv.id);
+          return err;
+        },
+        block: async (userId) => {
+          const err = await call('/api/blocks', { method: 'POST', body: JSON.stringify({ userId }) }, 'تعذر الحظر');
+          if (!err) void loadStatusesRef.current();
+          return err;
+        },
+        unblock: async (userId) => {
+          const err = await call(`/api/blocks/${encodeURIComponent(userId)}`, { method: 'DELETE' }, 'تعذر إلغاء الحظر');
+          if (!err) void loadStatusesRef.current();
+          return err;
+        },
+      };
+    },
+    [call, dropConversationLocally, loadWorkspaceData]
+  );
+
   const visibleConversations = useMemo(
     () => filterAndSortConversations(conversations, filter, searchQuery),
     [conversations, filter, searchQuery]
@@ -942,23 +1212,20 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden flex bg-[#F4F6F8] dark:bg-[var(--d-bg)] text-slate-900 dark:text-slate-100">
+    <div className="app-shell w-full overflow-hidden flex bg-[#F4F6F8] dark:bg-[var(--d-bg)] text-slate-900 dark:text-slate-100">
+      <StatusBanner settings={publicSettings} />
       {/* Navigation Rail (Right side in RTL) */}
       <SidebarNav
         currentUser={currentUser}
         totalUnread={totalUnread}
+        statusUnseen={statusUnseen}
         unreadNotifications={unreadNotifications}
-        darkMode={darkMode}
-        onToggleTheme={() => setDarkMode((d) => !d)}
-        onOpenNotifications={() => setActiveModal('notifications')}
-        onOpenDevices={() => setActiveModal('devices')}
-        onOpenProfile={() => setActiveModal('profile')}
-        onOpenThemes={() => setActiveModal('themes')}
-        onOpenSupport={() => setActiveModal('support')}
-        onOpenAdmin={() => setActiveModal('admin')}
-        onLogout={() => {
-          api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined).finally(clearSession);
+        section={section}
+        onSection={(s) => {
+          setSection(s);
+          setMobileView('list');
         }}
+        onOpenProfile={() => setActiveModal('profile')}
         mobileHidden={mobileView === 'chat'}
       />
 
@@ -968,14 +1235,24 @@ export default function App() {
           mobileView === 'chat' ? 'hidden md:block' : 'block pb-16 md:pb-0'
         }`}
       >
+        {section === 'status' ? (
+          <StatusPanel
+            feed={statusFeed}
+            currentUser={currentUser}
+            loading={statusLoading}
+            onAdd={() => setStatusComposer(true)}
+            onOpenMine={() => setStatusViewer({ kind: 'mine' })}
+            onOpenGroup={(index) => setStatusViewer({ kind: 'group', index })}
+          />
+        ) : (
         <ConversationList
+          statusRing={statusRing}
           conversations={visibleConversations}
           activeConversationId={activeConversationId}
           currentUserId={currentUser.id}
           filter={filter}
           searchQuery={searchQuery}
           wsConnected={wsConnected}
-          darkMode={darkMode}
           typingByConversation={typingByConv}
           onSelectConversation={(id) => {
             setActiveConversationId(id);
@@ -984,20 +1261,23 @@ export default function App() {
           onFilterChange={setFilter}
           onSearchChange={setSearchQuery}
           onOpenNewChat={() => setActiveModal('new_chat')}
-          onToggleTheme={() => setDarkMode((d) => !d)}
         />
+        )}
       </div>
 
       {/* Main Chat Workspace */}
       <div className={`flex-1 min-w-0 h-full ${mobileView === 'list' ? 'hidden md:flex' : 'flex'}`}>
         <ChatWorkspace
+          statusRing={statusRing}
           conversation={activeConversation}
           messages={activeConversationId ? messagesByConv[activeConversationId] || [] : []}
           currentUserId={currentUser.id}
           typingUsers={activeConversationId ? typingByConv[activeConversationId] || [] : []}
           onBackMobile={() => setMobileView('list')}
           onSendMessage={handleSendMessage}
-          onRetry={retryMessage}
+          onRetryMessage={handleRetryMessage}
+          onEditMessage={handleEditMessage}
+          onDeleteMessage={handleDeleteMessage}
           onTyping={handleTyping}
           onStartCall={handleStartCall}
           onOpenChatInfo={() => setActiveModal('chat_info')}
@@ -1062,11 +1342,11 @@ export default function App() {
         <ProfileModal
           user={currentUser}
           api={api}
-          onUpdated={setCurrentUser}
+          onUserChange={setCurrentUser}
           onClose={() => setActiveModal(null)}
           onOpenDevices={() => setActiveModal('devices')}
           onOpenSupport={() => setActiveModal('support')}
-          onOpenThemes={() => setActiveModal('themes')}
+          onOpenSettings={() => setActiveModal('settings')}
           onOpenAdmin={() => setActiveModal('admin')}
           onLogout={() => {
             setActiveModal(null);
@@ -1074,8 +1354,70 @@ export default function App() {
           }}
         />
       )}
-      {activeModal === 'themes' && (
-        <ThemeModal current={colorTheme} onApply={setColorTheme} onClose={() => setActiveModal(null)} />
+      {statusComposer && <StatusComposer api={api} onClose={() => setStatusComposer(false)} onPosted={() => void loadStatuses()} />}
+      {statusViewer?.kind === 'mine' && statusFeed.mine.length > 0 && (
+        <StatusViewer
+          api={api}
+          owner={currentUser}
+          statuses={statusFeed.mine}
+          isMine
+          onClose={() => setStatusViewer(null)}
+          onViewed={() => undefined}
+          onDeleted={() => void loadStatuses()}
+        />
+      )}
+      {statusViewer?.kind === 'group' && statusFeed.groups[statusViewer.index] && (
+        <StatusViewer
+          api={api}
+          owner={statusFeed.groups[statusViewer.index].user}
+          statuses={statusFeed.groups[statusViewer.index].statuses}
+          isMine={false}
+          onClose={() => {
+            setStatusViewer(null);
+            void loadStatuses();
+          }}
+          onNextOwner={() => {
+            const nextIndex = statusViewer.index + 1;
+            if (nextIndex < statusFeed.groups.length) {
+              setStatusViewer({ kind: 'group', index: nextIndex });
+              return true;
+            }
+            return false;
+          }}
+          onViewed={markStatusViewed}
+          onDeleted={() => undefined}
+        />
+      )}
+      {activeModal === 'settings' && (
+        <SettingsModal
+          user={currentUser}
+          api={api}
+          onUserChange={setCurrentUser}
+          themeMode={themeMode}
+          onThemeMode={setThemeMode}
+          colorTheme={colorTheme}
+          onColorTheme={pickColorTheme}
+          soundEnabled={soundEnabled}
+          onToggleSound={() => setSoundEnabled((v) => !v)}
+          browserPermission={browserPermission}
+          onRequestBrowserPermission={async () => {
+            if (typeof Notification !== 'undefined') setBrowserPermission(await Notification.requestPermission());
+          }}
+          unreadNotifications={unreadNotifications}
+          onOpenNotifications={() => setActiveModal('notifications')}
+          onOpenDevices={() => setActiveModal('devices')}
+          onOpenSupport={() => setActiveModal('support')}
+          onOpenProfile={() => setActiveModal('profile')}
+          onLogout={() => {
+            setActiveModal(null);
+            api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined).finally(clearSession);
+          }}
+          onAccountDeleted={() => {
+            setActiveModal(null);
+            clearSession();
+          }}
+          onClose={() => setActiveModal(null)}
+        />
       )}
       {activeModal === 'support' && <SupportModal api={api} onClose={() => setActiveModal(null)} />}
       {activeModal === 'admin' && currentUser.isAdmin && <AdminModal api={api} onClose={() => setActiveModal(null)} />}
@@ -1140,6 +1482,9 @@ export default function App() {
           conversation={activeConversation}
           messages={messagesByConv[activeConversation.id] || []}
           fingerprint={chatFingerprint}
+          currentUserId={currentUser.id}
+          api={api}
+          actions={makeChatActions(activeConversation)}
           onClose={() => setActiveModal(null)}
         />
       )}

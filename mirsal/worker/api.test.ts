@@ -69,9 +69,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
 
 const pub = JSON.stringify({ kty: 'EC', crv: 'P-256', x: 'a'.repeat(43), y: 'b'.repeat(43) });
 const secret = 'S'.repeat(44);
-const reg = (email: string, displayName = email.split('@')[0]) => ({
+const reg = (email: string, displayName = email.split('@')[0], handle = email.split('@')[0].replace(/[^a-z0-9]/g, '')) => ({
   email,
   displayName,
+  handle,
   authSecret: secret,
   publicKey: pub,
   encryptedPrivateKey: 'QUJD'.repeat(10),
@@ -117,10 +118,15 @@ test('conversations, encrypted messages, read receipts, notifications, devices',
   const b = (await call('POST', '/api/auth/register', reg('basem@test.dev'))).data;
   const c = (await call('POST', '/api/auth/register', reg('carim@test.dev'))).data;
 
-  const found = await call('GET', '/api/users/search?q=bas', undefined, a.token);
+  // Search works by exact username or 5-digit ID only: never by display name or email.
+  const found = await call('GET', '/api/users/search?q=basem', undefined, a.token);
   assert.deepEqual(found.data.users.map((u: any) => u.displayName), ['basem']);
   assert.ok(!('email' in found.data.users[0]), 'emails are never shown to other users');
-  assert.equal((await call('GET', '/api/users/search?q=b', undefined, a.token)).data.users.length, 0);
+  assert.equal(found.data.users[0].handle, 'basem');
+  assert.equal((await call('GET', `/api/users/search?q=${b.user.uid}`, undefined, a.token)).data.users.length, 1);
+  assert.equal((await call('GET', '/api/users/search?q=@BASEM', undefined, a.token)).data.users.length, 1);
+  assert.equal((await call('GET', '/api/users/search?q=bas', undefined, a.token)).data.users.length, 0, 'partial names do not match');
+  assert.equal((await call('GET', '/api/users/search?q=basem%40test.dev', undefined, a.token)).data.users.length, 0, 'email search is not allowed');
 
   const keys = (ids: string[]) => ids.map((userId) => ({ userId, wrappedKey: 'QUJD'.repeat(12), iv: 'AAAAAAAAAAAAAAAA' }));
   const missing = await call('POST', '/api/conversations', { memberIds: [b.user.id], keys: keys([a.user.id]) }, a.token);
@@ -215,7 +221,8 @@ test('developer account is reserved, admin APIs are admin-only, bans and ID edit
 
   const list = await call('GET', `/api/admin/users?q=${user.user.uid}`, undefined, adm.data.token);
   assert.equal(list.data.users.length, 1);
-  assert.equal(list.data.users[0].email, 'dina@test.dev');
+  assert.ok(!('email' in list.data.users[0]), 'the developer panel never exposes emails');
+  assert.equal(list.data.users[0].handle, 'dina');
 
   const taken = await call('PATCH', `/api/admin/users/${user.user.id}`, { uid: adm.data.user.uid }, adm.data.token);
   assert.equal(taken.status, 409);
@@ -324,4 +331,178 @@ test('message edit and delete: sender-only edit, windows, delete for me and for 
   const veryOld = new Date(Date.now() - 49 * 3_600_000).toISOString();
   await env.DB.prepare('UPDATE messages SET created_at = ? WHERE id = ?').bind(veryOld, 'msg_edit_000002').run();
   assert.equal((await call('DELETE', '/api/messages/msg_edit_000002?scope=all', undefined, a.token)).status, 403);
+});
+
+test('usernames: unique, validated, chosen once, and emails stay private', async () => {
+  const bad = await call('POST', '/api/auth/register', reg('h1@test.dev', 'a', 'ab'));
+  assert.equal(bad.status, 400);
+  assert.equal((await call('POST', '/api/auth/register', reg('h2@test.dev', 'a', '9lives'))).status, 400);
+  assert.equal((await call('POST', '/api/auth/register', reg('h3@test.dev', 'a', 'Admin'))).status, 400, 'reserved');
+  const ok = await call('POST', '/api/auth/register', reg('h4@test.dev', 'Hana', 'hana_99'));
+  assert.equal(ok.status, 200);
+  assert.equal(ok.data.user.handle, 'hana_99');
+  assert.equal(ok.data.user.email, 'h4@test.dev', 'own profile shows own email');
+  const dup = await call('POST', '/api/auth/register', reg('h5@test.dev', 'Other', 'HANA_99'));
+  assert.equal(dup.status, 409, 'case-insensitive uniqueness');
+
+  const chk = await call('GET', '/api/handle/check?h=hana_99');
+  assert.equal(chk.data.available, false);
+  assert.equal((await call('GET', '/api/handle/check?h=free_name')).data.available, true);
+
+  // Existing account without a handle can pick one once; it cannot be changed afterwards.
+  const old = await call('POST', '/api/auth/register', reg('h6@test.dev', 'Old', 'oldname'));
+  await env.DB.prepare('UPDATE users SET handle = NULL WHERE id = ?').bind(old.data.user.id).run();
+  assert.equal((await call('PUT', '/api/me/handle', { handle: 'hana_99' }, old.data.token)).status, 409);
+  const set = await call('PUT', '/api/me/handle', { handle: 'new_one' }, old.data.token);
+  assert.equal(set.status, 200);
+  assert.equal(set.data.user.handle, 'new_one');
+  assert.equal((await call('PUT', '/api/me/handle', { handle: 'another1' }, old.data.token)).status, 409);
+
+  // Other users never receive the email.
+  const seen = await call('GET', '/api/users/search?q=hana_99', undefined, old.data.token);
+  assert.equal(seen.data.users.length, 1);
+  assert.ok(!('email' in seen.data.users[0]));
+});
+
+/** Helpers for the social tests: two users that already chat directly. */
+async function pair(tag: string) {
+  const a = (await call('POST', '/api/auth/register', reg(`${tag}a@test.dev`, `${tag}A`, `${tag}aa`))).data;
+  const b = (await call('POST', '/api/auth/register', reg(`${tag}b@test.dev`, `${tag}B`, `${tag}bb`))).data;
+  const keys = [a.user.id, b.user.id].map((userId) => ({ userId, wrappedKey: 'QUJD'.repeat(12), iv: 'AAAAAAAAAAAAAAAA' }));
+  const conv = await call('POST', '/api/conversations', { memberIds: [b.user.id], keys }, a.token);
+  return { a, b, convId: conv.data.conversation.id as string };
+}
+
+test('statuses: contacts only, green-ring feed, views, privacy, delete and expiry', async () => {
+  const { a, b } = await pair('st');
+  const stranger = (await call('POST', '/api/auth/register', reg('ststr@test.dev', 'Stranger', 'stranger1'))).data;
+
+  assert.equal((await call('POST', '/api/statuses', { type: 'text', text: '' }, a.token)).status, 400);
+  assert.equal((await call('POST', '/api/statuses', { type: 'image', image: 'http://x/y.png' }, a.token)).status, 415);
+  const made = await call('POST', '/api/statuses', { type: 'text', text: 'صباح الخير', bg: '#0f766e' }, a.token);
+  assert.equal(made.status, 200);
+  const sid = made.data.status.id as string;
+
+  // Contact sees it; a stranger (no direct chat) does not.
+  const feedB = await call('GET', '/api/statuses', undefined, b.token);
+  assert.equal(feedB.data.groups.length, 1);
+  assert.equal(feedB.data.groups[0].user.id, a.user.id);
+  assert.equal(feedB.data.groups[0].allViewed, false);
+  assert.ok(!('email' in feedB.data.groups[0].user));
+  assert.equal((await call('GET', '/api/statuses', undefined, stranger.token)).data.groups.length, 0);
+  assert.equal((await call('POST', `/api/statuses/${sid}/view`, {}, stranger.token)).status, 403);
+
+  // Viewing flips allViewed and shows up for the owner.
+  assert.equal((await call('POST', `/api/statuses/${sid}/view`, {}, b.token)).status, 200);
+  assert.equal((await call('GET', '/api/statuses', undefined, b.token)).data.groups[0].allViewed, true);
+  const mine = await call('GET', '/api/statuses', undefined, a.token);
+  assert.equal(mine.data.mine[0].viewCount, 1);
+  const viewers = await call('GET', `/api/statuses/${sid}/views`, undefined, a.token);
+  assert.equal(viewers.data.viewers[0].user.id, b.user.id);
+  assert.equal((await call('GET', `/api/statuses/${sid}/views`, undefined, b.token)).status, 404);
+
+  // Privacy "nobody" hides statuses from everyone.
+  assert.equal((await call('PATCH', '/api/me', { statusPrivacy: 'nobody' }, a.token)).status, 200);
+  assert.equal((await call('GET', '/api/statuses', undefined, b.token)).data.groups.length, 0);
+  await call('PATCH', '/api/me', { statusPrivacy: 'contacts' }, a.token);
+
+  // Blocking hides statuses too; unblocking restores.
+  assert.equal((await call('POST', '/api/blocks', { userId: b.user.id }, a.token)).status, 200);
+  assert.equal((await call('GET', '/api/statuses', undefined, b.token)).data.groups.length, 0);
+  assert.equal((await call('DELETE', `/api/blocks/${b.user.id}`, undefined, a.token)).status, 200);
+  assert.equal((await call('GET', '/api/statuses', undefined, b.token)).data.groups.length, 1);
+
+  // Expiry after 24 h; only the owner can delete.
+  await env.DB.prepare('UPDATE statuses SET expires_at = ? WHERE id = ?').bind(new Date(Date.now() - 1000).toISOString(), sid).run();
+  assert.equal((await call('GET', '/api/statuses', undefined, b.token)).data.groups.length, 0);
+  const second = await call('POST', '/api/statuses', { type: 'text', text: 'ثانية' }, a.token);
+  assert.equal((await call('DELETE', `/api/statuses/${second.data.status.id}`, undefined, b.token)).status, 404);
+  assert.equal((await call('DELETE', `/api/statuses/${second.data.status.id}`, undefined, a.token)).status, 200);
+});
+
+test('blocking: no new chats or messages, blocker is hidden from search', async () => {
+  const { a, b, convId } = await pair('bl');
+  const c = (await call('POST', '/api/auth/register', reg('blc@test.dev', 'C', 'blcc'))).data;
+  assert.equal((await call('POST', '/api/blocks', { userId: a.user.id }, a.token)).status, 400, 'cannot block yourself');
+  assert.equal((await call('POST', '/api/blocks', { userId: b.user.id }, a.token)).status, 200);
+  assert.equal((await call('GET', '/api/blocks', undefined, a.token)).data.users[0].id, b.user.id);
+  const msg = { id: 'msg_blocked_0001', type: 'text', ciphertext: 'QUJD'.repeat(8), iv: 'AAAAAAAAAAAAAAAA' };
+  assert.equal((await call('POST', `/api/conversations/${convId}/messages`, msg, b.token)).status, 403);
+  assert.equal((await call('POST', `/api/conversations/${convId}/messages`, msg, a.token)).status, 403);
+  assert.equal((await call('GET', `/api/users/search?q=${a.user.uid}`, undefined, b.token)).data.users.length, 0);
+  const keys = [c.user.id, a.user.id].map((userId) => ({ userId, wrappedKey: 'QUJD'.repeat(12), iv: 'AAAAAAAAAAAAAAAA' }));
+  assert.equal((await call('POST', '/api/conversations', { memberIds: [a.user.id], keys }, c.token)).status, 200, 'unrelated users still chat');
+  await call('DELETE', `/api/blocks/${b.user.id}`, undefined, a.token);
+  assert.equal((await call('POST', `/api/conversations/${convId}/messages`, msg, b.token)).status, 200);
+});
+
+test('groups: roles, add/remove, rename, leave with ownership transfer, delete', async () => {
+  const mk = async (n: string) => (await call('POST', '/api/auth/register', reg(`g${n}@test.dev`, `G${n}`, `gg${n}x`))).data;
+  const [o, m1, m2, m3] = [await mk('o'), await mk('p'), await mk('q'), await mk('r')];
+  const key = (userId: string) => ({ userId, wrappedKey: 'QUJD'.repeat(12), iv: 'AAAAAAAAAAAAAAAA' });
+  const created = await call('POST', '/api/conversations', { memberIds: [m1.user.id, m2.user.id], title: 'فريق', keys: [o, m1, m2].map((u) => key(u.user.id)) }, o.token);
+  assert.equal(created.status, 200);
+  const cid = created.data.conversation.id as string;
+  assert.equal(created.data.conversation.createdBy, o.user.id);
+  assert.equal(created.data.conversation.members.find((x: any) => x.id === o.user.id).role, 'admin');
+
+  // Rename / add: admins only.
+  assert.equal((await call('PATCH', `/api/conversations/${cid}`, { title: 'جديد' }, m1.token)).status, 403);
+  assert.equal((await call('PATCH', `/api/conversations/${cid}`, { title: 'اسم جديد' }, o.token)).data.conversation.title, 'اسم جديد');
+  assert.equal((await call('POST', `/api/conversations/${cid}/members`, { members: [key(m3.user.id)] }, m1.token)).status, 403);
+  const added = await call('POST', `/api/conversations/${cid}/members`, { members: [key(m3.user.id)] }, o.token);
+  assert.equal(added.status, 200);
+  assert.equal(added.data.conversation.members.length, 4);
+  assert.equal((await call('POST', `/api/conversations/${cid}/members`, { members: [key(m3.user.id)] }, o.token)).status, 400, 'already a member');
+
+  // Roles: only the owner promotes; an admin can add but cannot remove other admins.
+  assert.equal((await call('PATCH', `/api/conversations/${cid}/members/${m1.user.id}`, { role: 'admin' }, m2.token)).status, 403);
+  assert.equal((await call('PATCH', `/api/conversations/${cid}/members/${m1.user.id}`, { role: 'admin' }, o.token)).status, 200);
+  assert.equal((await call('DELETE', `/api/conversations/${cid}/members/${o.user.id}`, undefined, m1.token)).status, 403, 'owner cannot be removed');
+  assert.equal((await call('DELETE', `/api/conversations/${cid}/members/${m2.user.id}`, undefined, m3.token)).status, 403, 'plain members cannot remove');
+  assert.equal((await call('DELETE', `/api/conversations/${cid}/members/${m2.user.id}`, undefined, m1.token)).status, 200);
+  assert.equal((await call('GET', `/api/conversations/${cid}/messages`, undefined, m2.token)).status, 403, 'removed member loses access');
+
+  // Owner leaves: ownership moves to the first admin.
+  assert.equal((await call('POST', `/api/conversations/${cid}/leave`, {}, o.token)).status, 200);
+  const after = await call('GET', `/api/conversations/${cid}`, undefined, m1.token);
+  assert.equal(after.data.conversation.createdBy, m1.user.id);
+  assert.equal(after.data.conversation.members.length, 2);
+
+  // Delete for everyone: owner only.
+  assert.equal((await call('DELETE', `/api/conversations/${cid}?scope=all`, undefined, m3.token)).status, 403);
+  assert.equal((await call('DELETE', `/api/conversations/${cid}?scope=all`, undefined, m1.token)).status, 200);
+  assert.equal((await call('GET', `/api/conversations/${cid}`, undefined, m1.token)).status, 404);
+});
+
+test('clear chat for me, profile edit and account deletion', async () => {
+  const { a, b, convId } = await pair('pr');
+  const msg = (id: string) => ({ id, type: 'text', ciphertext: 'QUJD'.repeat(8), iv: 'AAAAAAAAAAAAAAAA' });
+  await call('POST', `/api/conversations/${convId}/messages`, msg('msg_clear_000001'), a.token);
+
+  // Clearing hides the chat and its history for me only; a new message brings it back with just the new text.
+  assert.equal((await call('DELETE', `/api/conversations/${convId}`, undefined, b.token)).status, 200);
+  assert.equal((await call('GET', '/api/conversations', undefined, b.token)).data.conversations.length, 0);
+  assert.equal((await call('GET', '/api/conversations', undefined, a.token)).data.conversations.length, 1);
+  await new Promise((r) => setTimeout(r, 5));
+  await call('POST', `/api/conversations/${convId}/messages`, msg('msg_clear_000002'), a.token);
+  assert.equal((await call('GET', '/api/conversations', undefined, b.token)).data.conversations.length, 1);
+  const history = await call('GET', `/api/conversations/${convId}/messages`, undefined, b.token);
+  assert.deepEqual(history.data.messages.map((m: any) => m.id), ['msg_clear_000002']);
+
+  // Profile edit (username is not editable here).
+  assert.equal((await call('PATCH', '/api/me', { displayName: 'x' }, a.token)).status, 400);
+  const edited = await call('PATCH', '/api/me', { displayName: 'اسم جديد', bio: 'نبذة', handle: 'hacked' }, a.token);
+  assert.equal(edited.status, 200);
+  assert.equal(edited.data.user.displayName, 'اسم جديد');
+  assert.equal(edited.data.user.bio, 'نبذة');
+  assert.equal(edited.data.user.handle, 'praa', 'handle never changes through PATCH /api/me');
+  assert.equal((await call('PATCH', '/api/me', {}, a.token)).status, 400);
+  assert.equal((await call('PATCH', '/api/me', { statusPrivacy: 'everyone' }, a.token)).status, 400);
+
+  // Deleting the account needs the password secret.
+  assert.equal((await call('DELETE', '/api/me', { authSecret: 'wrong' }, b.token)).status, 403);
+  assert.equal((await call('DELETE', '/api/me', { authSecret: secret }, b.token)).status, 200);
+  assert.equal((await call('GET', '/api/me', undefined, b.token)).status, 401);
+  assert.equal((await call('POST', '/api/auth/login', { identifier: 'prb@test.dev', authSecret: secret })).status, 401);
 });

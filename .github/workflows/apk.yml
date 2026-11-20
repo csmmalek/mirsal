@@ -1,29 +1,72 @@
 name: Build APK
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "mirsal/android/**"
+      - "mirsal/src/**"
+      - "mirsal/worker/**"
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check release signing secrets
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ]; then
+            echo "::error::Missing signing secrets. Add ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD in GitHub > Settings > Secrets."
+            exit 1
+          fi
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 11
+
       - name: Install Android SDK packages
         run: |
-          ls "$ANDROID_HOME/cmdline-tools" || true
           SDKM="$(command -v sdkmanager || true)"
           if [ -z "$SDKM" ]; then SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"; fi
-          echo "Using $SDKM"
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "platforms;android-28" "build-tools;28.0.3"
+
       - uses: gradle/gradle-build-action@v2
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          APP_VERSION_CODE: ${{ github.run_number }}
+          APP_VERSION_NAME: "1.${{ github.run_number }}"
         with:
           gradle-version: 6.7.1
-          build-root-directory: mirsal/mirsal/android
-          arguments: assembleDebug
+          build-root-directory: mirsal/android
+          arguments: assembleRelease
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp mirsal/android/app/build/outputs/apk/release/app-release.apk "out/mirsal-${{ github.run_number }}.apk"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: mirsal-apk
-          path: mirsal/mirsal/android/app/build/outputs/apk/debug/*.apk
+          name: mirsal-apk-${{ github.run_number }}
+          path: out/*.apk
+
+      - name: Publish release (APK users can update to)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Mirsal ${{ github.run_number }}
+          files: out/*.apk
+          make_latest: true

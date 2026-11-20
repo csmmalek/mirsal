@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { KeyRound, Lock, LogIn, Mail, ShieldCheck, Smartphone, UserPlus } from 'lucide-react';
 import { ADMIN_EMAIL } from '../constants';
 
@@ -8,6 +8,8 @@ export interface AuthParams {
   email: string;
   password: string;
   displayName?: string;
+  /** اسم المستخدم الفريد (للتسجيل فقط). */
+  handle?: string;
   setupCode?: string;
 }
 
@@ -20,16 +22,38 @@ interface AuthGateProps {
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
 
 const inputCls =
-  'w-full min-h-[46px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[var(--d-bg)] text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500';
+  'field-glass w-full min-h-[46px] px-3.5 py-2 rounded-xl text-sm text-slate-900 dark:text-slate-100';
 const labelCls = 'block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5';
 
 export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [handle, setHandle] = useState('');
+  const [handleCheck, setHandleCheck] = useState<{ ok: boolean; msg: string } | null>(null);
   const [password, setPassword] = useState('');
   const [setupCode, setSetupCode] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+
+  const h = handle.trim().toLowerCase().replace(/^@/, '');
+
+  // Live username availability (public endpoint), debounced.
+  useEffect(() => {
+    if (mode !== 'register' || !h) {
+      setHandleCheck(null);
+      return;
+    }
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/handle/check?h=${encodeURIComponent(h)}`);
+        const d = (await res.json()) as { available: boolean; reason?: string };
+        setHandleCheck(d.available ? { ok: true, msg: 'اسم المستخدم متاح' } : { ok: false, msg: d.reason || 'غير متاح' });
+      } catch {
+        setHandleCheck(null);
+      }
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [h, mode]);
 
   const e = email.trim().toLowerCase();
   const isAdminEmail = e === ADMIN_EMAIL;
@@ -40,12 +64,14 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) 
     if (mode === 'register') {
       if (!EMAIL_RE.test(e)) return setLocalError('يرجى إدخال بريد إلكتروني صحيح');
       if (!displayName.trim()) return setLocalError('يرجى إدخال الاسم الظاهر');
+      if (!/^[a-z][a-z0-9_]{2,19}$/.test(h)) return setLocalError('اسم المستخدم من 3 إلى 20 حرفاً: أحرف إنجليزية صغيرة وأرقام وشرطة سفلية، ويبدأ بحرف');
+      if (handleCheck && !handleCheck.ok) return setLocalError(handleCheck.msg);
       if (password.length < 8) return setLocalError('كلمة المرور يجب ألا تقل عن 8 أحرف');
       if (isAdminEmail && !setupCode.trim()) return setLocalError('أدخل رمز إعداد المطور');
     } else if (!e || !password) {
       return setLocalError('يرجى إدخال البريد الإلكتروني وكلمة المرور');
     }
-    await onSubmit({ mode, email: e, password, displayName: displayName.trim(), setupCode: setupCode.trim() });
+    await onSubmit({ mode, email: e, password, displayName: displayName.trim(), handle: h, setupCode: setupCode.trim() });
   };
 
   return (
@@ -92,11 +118,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) 
                     setMode(m);
                     setLocalError(null);
                   }}
-                  className={`flex-1 min-h-[40px] px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
-                    mode === m
-                      ? 'bg-white dark:bg-[var(--d-surface2)] text-slate-900 dark:text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400'
-                  }`}
+                  className={`btn-glass ${mode === m ? '' : 'btn-ghost'} flex-1 min-h-[44px] px-3 py-2 text-xs font-semibold rounded-lg`}
                 >
                   {m === 'login' ? 'تسجيل الدخول' : 'حساب جديد'}
                 </button>
@@ -146,6 +168,27 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) 
                   />
                 </div>
               )}
+              {mode === 'register' && (
+                <div>
+                  <label htmlFor="auth-handle" className={labelCls}>
+                    اسم المستخدم (فريد ولا يتغير)
+                  </label>
+                  <input
+                    id="auth-handle"
+                    dir="ltr"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    maxLength={20}
+                    value={handle}
+                    onChange={(ev) => setHandle(ev.target.value)}
+                    placeholder="ahmed_99"
+                    className={`${inputCls} text-left`}
+                  />
+                  <p className={`text-[11px] mt-1 ${handleCheck ? (handleCheck.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400') : 'text-slate-500 dark:text-slate-400'}`}>
+                    {handleCheck ? handleCheck.msg : 'يبحث به الآخرون عنك. لن يرى أحد بريدك الإلكتروني.'}
+                  </p>
+                </div>
+              )}
               <div>
                 <label htmlFor="auth-password" className={labelCls}>
                   كلمة المرور
@@ -181,7 +224,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full min-h-[46px] px-4 py-2.5 rounded-xl btn-glass text-sm font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+                className="btn-glass w-full min-h-[46px] px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
               >
                 {mode === 'login' ? <LogIn className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
                 <span>{loading ? 'جاري تأمين الحساب...' : mode === 'login' ? 'دخول' : 'إنشاء الحساب'}</span>

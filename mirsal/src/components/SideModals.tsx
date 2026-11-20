@@ -27,37 +27,42 @@ interface ModalShellProps {
   wide?: boolean;
 }
 
-export const ModalShell: React.FC<ModalShellProps> = ({ title, onClose, children, wide }) => (
-  <div
-    role="dialog"
-    aria-modal="true"
-    aria-label={title}
-    className="modal-backdrop fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
-    onClick={onClose}
-  >
+export const ModalShell: React.FC<ModalShellProps> = ({ title, onClose, children, wide }) => {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
     <div
-      onClick={(e) => e.stopPropagation()}
-      className={`modal-panel w-full ${
-        wide ? 'max-w-3xl' : 'max-w-lg'
-      } max-h-[88vh] bg-white dark:bg-[var(--d-surface)] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl flex flex-col overflow-hidden`}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="modal-backdrop fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={onClose}
     >
-      <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
-        <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 font-display">
-          {title}
-        </h3>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="إغلاق"
-          className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-        >
-          <X className="w-5 h-5" />
-        </button>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={`modal-card w-full ${
+          wide ? 'max-w-3xl' : 'max-w-lg'
+        } max-h-[92dvh] sm:max-h-[88dvh] bg-white dark:bg-[var(--d-surface)] border border-[var(--glass-border)] rounded-t-[var(--radius-xl)] sm:rounded-[var(--radius-xl)] shadow-2xl flex flex-col overflow-hidden`}
+      >
+        <div className="px-5 py-4 border-b border-[var(--glass-border)] flex items-center justify-between gap-3">
+          <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 font-display">{title}</h3>
+          <button type="button" onClick={onClose} aria-label="إغلاق" className="icon-btn text-slate-500 dark:text-slate-400">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5" style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom, 0px))' }}>
+          {children}
+        </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-5">{children}</div>
     </div>
-  </div>
-);
+  );
+};
 
 /* --- 1. New Chat / Group Modal --- */
 export const NewChatModal: React.FC<{
@@ -75,7 +80,7 @@ export const NewChatModal: React.FC<{
   const [error, setError] = useState<string | null>(null);
 
   React.useEffect(() => {
-    if (query.trim().length < 2) {
+    if (query.trim().replace(/^@/, '').length < 3) {
       setResults([]);
       return;
     }
@@ -140,8 +145,8 @@ export const NewChatModal: React.FC<{
             dir="auto"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="ابحث بالـ ID (5 أرقام) أو بالاسم"
-            className="w-full min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[var(--d-bg)] text-sm"
+            placeholder="ابحث بالـ ID أو اسم المستخدم الكامل"
+            className="field-glass w-full min-h-[44px] px-3.5 rounded-xl text-sm text-slate-900 dark:text-slate-100"
           />
           <p className="text-xs text-slate-500 dark:text-slate-400">
             اختر شخصاً للمراسلة المباشرة، أو أكثر لإنشاء مجموعة:
@@ -171,8 +176,8 @@ export const NewChatModal: React.FC<{
                       <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
                         {user.displayName}
                       </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                        #{user.uid}
+                      <div dir="ltr" className="text-xs text-slate-500 dark:text-slate-400 truncate text-right">
+                        {user.handle ? `@${user.handle} · ` : ''}#{user.uid}
                       </div>
                     </div>
                   </div>
@@ -195,7 +200,7 @@ export const NewChatModal: React.FC<{
           type="button"
           disabled={selectedIds.length === 0 || busy}
           onClick={handleCreate}
-          className="w-full min-h-[44px] rounded-xl btn-glass disabled:opacity-50 text-sm font-semibold"
+          className="btn-glass w-full min-h-[44px] rounded-xl text-sm font-semibold"
         >
           {selectedIds.length > 1 ? 'إنشاء المجموعة المشفرة' : 'بدء المحادثة'}
         </button>
@@ -263,7 +268,7 @@ export const DevicesModal: React.FC<{
                         type="button"
                         onClick={() => onRevokeDevice(d.id)}
                         aria-label={`فصل ${d.deviceName}`}
-                        className="min-h-[36px] min-w-[36px] rounded-lg flex items-center justify-center text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                        className="icon-btn text-red-600 dark:text-red-400"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -322,7 +327,7 @@ export const NotificationsModal: React.FC<{
             <button
               type="button"
               onClick={onRequestBrowserPermission}
-              className="min-h-[40px] px-3.5 py-2 rounded-xl btn-glass text-xs font-semibold"
+              className="btn-glass min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-semibold"
             >
               تفعيل إشعارات المتصفح
             </button>
@@ -397,110 +402,3 @@ export const NotificationsModal: React.FC<{
     </div>
   </ModalShell>
 );
-
-/* --- 4. Chat Info & E2EE Safety Fingerprint Modal --- */
-export const ChatInfoModal: React.FC<{
-  conversation: Conversation;
-  messages: Message[];
-  fingerprint: string;
-  onClose: () => void;
-}> = ({ conversation, messages, fingerprint, onClose }) => {
-  const sharedImages = messages.filter((m) => m.type === 'image' && m.decrypted?.mediaUrl);
-
-  return (
-    <ModalShell title="معلومات المحادثة والتشفير الطرفي" onClose={onClose}>
-      <div className="space-y-5">
-        <div className="flex items-center gap-3.5">
-          {conversation.type === 'group' && !conversation.avatar ? (
-            <div className="w-14 h-14 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 flex items-center justify-center shrink-0">
-              <Users className="w-6 h-6" />
-            </div>
-          ) : (
-            <img
-              src={conversation.avatar}
-              alt={conversation.title}
-              referrerPolicy="no-referrer"
-              className="w-14 h-14 rounded-full object-cover shrink-0"
-            />
-          )}
-          <div>
-            <h4 className="text-base font-bold text-slate-900 dark:text-slate-100">
-              {conversation.title}
-            </h4>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              {conversation.type === 'group'
-                ? `مجموعة مشفرة · ${conversation.members.length} أعضاء`
-                : 'محادثة ثنائية مشفرة طرف إلى طرف'}
-            </p>
-          </div>
-        </div>
-
-        <div className="p-4 rounded-xl bg-slate-50 dark:bg-[var(--d-surface2)] border border-slate-200 dark:border-slate-800 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-            <ShieldCheck className="w-4 h-4" />
-            <span>رقم الأمان وبصمة التحقق (SHA-256)</span>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            طابق هذه الأرقام مع الطرف الآخر للتأكد من سلامة التشفير الطرفي (AES-256-GCM):
-          </p>
-          <div
-            dir="ltr"
-            className="p-3 rounded-lg bg-white dark:bg-[var(--d-bg)] border border-slate-200 dark:border-slate-800 font-mono text-xs text-center tracking-wider leading-relaxed tabular-nums text-slate-800 dark:text-slate-200"
-          >
-            {fingerprint}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <h5 className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-            الأعضاء المشاركون ({conversation.members.length})
-          </h5>
-          <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl">
-            {conversation.members.map((m) => (
-              <div key={m.id} className="p-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <img
-                    src={m.avatar}
-                    alt={m.displayName}
-                    referrerPolicy="no-referrer"
-                    className="w-8 h-8 rounded-full object-cover shrink-0"
-                  />
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                      {m.displayName}
-                    </div>
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                      #{m.uid}
-                    </div>
-                  </div>
-                </div>
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {m.online ? 'متصل' : 'غير متصل'}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {sharedImages.length > 0 && (
-          <div className="space-y-2">
-            <h5 className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              الوسائط المشفرة المتبادلة ({sharedImages.length})
-            </h5>
-            <div className="grid grid-cols-3 gap-2">
-              {sharedImages.map((img) => (
-                <img
-                  key={img.id}
-                  src={img.decrypted?.mediaUrl}
-                  alt={img.decrypted?.mediaName || 'وسائط'}
-                  referrerPolicy="no-referrer"
-                  className="aspect-square w-full object-cover rounded-xl bg-slate-200 dark:bg-slate-800"
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </ModalShell>
-  );
-};

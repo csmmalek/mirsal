@@ -6,37 +6,33 @@ import {
   Copy,
   LifeBuoy,
   LogOut,
+  MessageSquare,
+  MessagesSquare,
   Palette,
   Pencil,
   Send,
+  Settings,
   Shield,
   Smartphone,
   Trash2,
+  UserX,
   Users,
+  Wifi,
 } from 'lucide-react';
 import type { User } from '../types/chat';
 import { THEMES } from '../themes';
-import { fileToAvatarDataUrl } from '../utils/image';
 import { FALLBACK_WALLPAPERS, applyWallpaper, currentWallpaper, getWallpapers } from '../appearance';
 import { ModalShell } from './SideModals';
+import { errorMessage, readError } from '../api/client';
 
 type Api = (path: string, init?: RequestInit) => Promise<Response>;
 
-const btn =
-  'min-h-[42px] px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50';
-const primaryBtn = `${btn} btn-glass`;
-const ghostBtn = `${btn} btn-ghost-glass text-slate-800 dark:text-slate-100`;
+const btn = 'min-h-[44px] px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2';
+const primaryBtn = `btn-glass ${btn}`;
+const ghostBtn = `btn-glass btn-ghost ${btn}`;
+const dangerBtn = `btn-glass btn-danger ${btn}`;
 const fieldCls =
-  'w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[var(--d-bg)] text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500';
-
-async function readError(res: Response, fallback: string): Promise<string> {
-  try {
-    const d = (await res.json()) as { error?: string };
-    return d.error || fallback;
-  } catch {
-    return fallback;
-  }
-}
+  'field-glass w-full min-h-[44px] px-3 py-2 rounded-xl text-sm text-slate-900 dark:text-slate-100';
 
 const fmtDate = (iso: string) => {
   const d = new Date(iso);
@@ -45,55 +41,152 @@ const fmtDate = (iso: string) => {
 
 /* ------------------------------- Profile ------------------------------- */
 
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_AVATAR_SOURCE_BYTES = 12 * 1024 * 1024;
+
+/** يقصّ الصورة مربعة ويصغّرها إلى 256px بصيغة JPEG (حجمها نحو 15-30 كيلوبايت). */
+function prepareAvatar(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const side = Math.min(img.naturalWidth, img.naturalHeight);
+      if (!side) return reject(new Error('bad'));
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return reject(new Error('bad'));
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      const sx = (img.naturalWidth - side) / 2;
+      const sy = (img.naturalHeight - side) / 2;
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      for (const q of [0.85, 0.7, 0.55, 0.4]) {
+        const out = canvas.toDataURL('image/jpeg', q);
+        if (out.length <= 80_000) return resolve(out);
+      }
+      reject(new Error('too large'));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('bad'));
+    };
+    img.src = url;
+  });
+}
+
+
 export const ProfileModal: React.FC<{
   user: User;
   api: Api;
-  onUpdated: (u: User) => void;
+  onUserChange: (user: User) => void;
   onClose: () => void;
   onOpenDevices: () => void;
   onOpenSupport: () => void;
-  onOpenThemes: () => void;
+  onOpenSettings: () => void;
   onOpenAdmin: () => void;
   onLogout: () => void;
-}> = ({ user, api, onUpdated, onClose, onOpenDevices, onOpenSupport, onOpenThemes, onOpenAdmin, onLogout }) => {
+}> = ({ user, api, onUserChange, onClose, onOpenDevices, onOpenSupport, onOpenSettings, onOpenAdmin, onLogout }) => {
   const [copied, setCopied] = useState(false);
-  const [name, setName] = useState(user.displayName);
-  const [status, setStatus] = useState(user.statusText ?? '');
-  const [bio, setBio] = useState(user.bio);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  const hasCustomAvatar = !user.avatar.startsWith('data:image/svg');
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [handleInput, setHandleInput] = useState('');
+  const [handleState, setHandleState] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [handleBusy, setHandleBusy] = useState(false);
 
-  const patch = async (body: Record<string, unknown>, okText: string) => {
-    setBusy(true);
-    setMsg(null);
+  // Live availability check while choosing a username (debounced).
+  useEffect(() => {
+    if (user.handle) return;
+    const h = handleInput.trim().toLowerCase().replace(/^@/, '');
+    if (!h) {
+      setHandleState(null);
+      return;
+    }
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await api(`/api/handle/check?h=${encodeURIComponent(h)}`);
+        const d = (await res.json()) as { available: boolean; reason?: string };
+        setHandleState(d.available ? { ok: true, msg: 'اسم المستخدم متاح' } : { ok: false, msg: d.reason || 'غير متاح' });
+      } catch {
+        setHandleState({ ok: false, msg: 'تعذر التحقق، تحقق من الاتصال' });
+      }
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [handleInput, user.handle, api]);
+
+  const saveHandle = async () => {
+    setHandleBusy(true);
     try {
-      const res = await api('/api/me', { method: 'PATCH', body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(await readError(res, 'تعذر حفظ التغييرات'));
-      const data = (await res.json()) as { user: User };
-      onUpdated(data.user);
-      setMsg({ ok: true, text: okText });
-    } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : 'تعذر حفظ التغييرات' });
+      const res = await api('/api/me/handle', { method: 'PUT', body: JSON.stringify({ handle: handleInput }) });
+      if (!res.ok) {
+        setHandleState({ ok: false, msg: await readError(res, 'تعذر حفظ اسم المستخدم') });
+        return;
+      }
+      onUserChange(((await res.json()) as { user: User }).user);
+    } catch (err) {
+      setHandleState({ ok: false, msg: errorMessage(err, 'تعذر حفظ اسم المستخدم') });
     } finally {
-      setBusy(false);
+      setHandleBusy(false);
     }
   };
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const hasCustomAvatar = !user.avatar.startsWith('data:image/svg+xml');
 
-  const pickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    let dataUrl: string;
-    try {
-      dataUrl = await fileToAvatarDataUrl(file);
-    } catch (err) {
-      setMsg({ ok: false, text: err instanceof Error ? err.message : 'تعذر معالجة الصورة' });
+    setAvatarError(null);
+    if (!AVATAR_TYPES.includes(file.type)) {
+      setAvatarError('نوع الصورة غير مدعوم، اختر صورة بصيغة JPG أو PNG أو WebP');
       return;
     }
-    await patch({ avatar: dataUrl }, 'تم تحديث الصورة');
+    if (file.size > MAX_AVATAR_SOURCE_BYTES) {
+      setAvatarError('حجم الصورة كبير جداً، اختر صورة أقل من 12 ميغابايت');
+      return;
+    }
+    setAvatarBusy(true);
+    try {
+      let avatar: string;
+      try {
+        avatar = await prepareAvatar(file);
+      } catch {
+        setAvatarError('تعذر قراءة الصورة، جرّب صورة أخرى');
+        return;
+      }
+      const res = await api('/api/me/avatar', { method: 'PUT', body: JSON.stringify({ avatar }) });
+      if (!res.ok) {
+        setAvatarError(await readError(res, 'تعذر حفظ الصورة'));
+        return;
+      }
+      onUserChange(((await res.json()) as { user: User }).user);
+    } catch (err) {
+      setAvatarError(errorMessage(err, 'تعذر رفع الصورة'));
+    } finally {
+      setAvatarBusy(false);
+    }
   };
+
+  const removeAvatar = async () => {
+    setAvatarError(null);
+    setAvatarBusy(true);
+    try {
+      const res = await api('/api/me/avatar', { method: 'DELETE' });
+      if (!res.ok) {
+        setAvatarError(await readError(res, 'تعذر حذف الصورة'));
+        return;
+      }
+      onUserChange(((await res.json()) as { user: User }).user);
+    } catch (err) {
+      setAvatarError(errorMessage(err, 'تعذر حذف الصورة'));
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(user.uid);
@@ -106,26 +199,27 @@ export const ProfileModal: React.FC<{
   return (
     <ModalShell title="الملف الشخصي" onClose={onClose}>
       <div className="flex flex-col items-center text-center gap-2 mb-5">
-        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pickAvatar} />
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={busy}
-          aria-label="تغيير الصورة الشخصية"
-          className="relative w-24 h-24 rounded-full overflow-hidden ring-2 ring-[color:var(--accent)] ring-offset-2 ring-offset-white dark:ring-offset-[var(--d-surface)] disabled:opacity-60"
-        >
-          <img src={user.avatar} alt="" className="w-full h-full object-cover" />
-          <span className="absolute inset-x-0 bottom-0 h-8 bg-black/45 backdrop-blur-sm flex items-center justify-center text-white">
-            <Camera className="w-4 h-4" />
-          </span>
-        </button>
-        {hasCustomAvatar && (
+        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onPickAvatar} />
+        <div className="relative">
+          <img src={user.avatar} alt="" className="w-24 h-24 rounded-full object-cover" />
           <button
             type="button"
-            onClick={() => patch({ avatar: null }, 'تمت إزالة الصورة')}
-            disabled={busy}
-            className="text-[11px] text-red-600 dark:text-red-400 underline underline-offset-2"
+            onClick={() => fileRef.current?.click()}
+            disabled={avatarBusy}
+            aria-label="تغيير الصورة الشخصية"
+            className="btn-glass absolute -bottom-1 -left-1 w-9 h-9 rounded-full flex items-center justify-center"
           >
+            <Camera className="w-4 h-4" />
+          </button>
+        </div>
+        {avatarBusy && <p className="text-[11px] text-slate-500 dark:text-slate-400">جارٍ حفظ الصورة...</p>}
+        {avatarError && (
+          <p role="alert" className="text-xs text-red-600 dark:text-red-400 max-w-[260px]">
+            {avatarError}
+          </p>
+        )}
+        {hasCustomAvatar && !avatarBusy && (
+          <button type="button" onClick={removeAvatar} className="text-[11px] text-slate-500 dark:text-slate-400 hover:underline">
             إزالة الصورة
           </button>
         )}
@@ -133,9 +227,39 @@ export const ProfileModal: React.FC<{
           {user.displayName}
           {user.isAdmin && <Shield className="w-4 h-4 text-amber-500" aria-label="المطور" />}
         </div>
+        {user.handle && (
+          <div dir="ltr" className="text-sm font-semibold text-[color:var(--accent)]">
+            @{user.handle}
+          </div>
+        )}
         {user.email && (
-          <div dir="ltr" className="text-xs text-slate-500 dark:text-slate-400">
-            {user.email}
+          <div className="text-[11px] text-slate-500 dark:text-slate-400" title="بريدك لا يراه أي شخص آخر">
+            <span dir="ltr">{user.email}</span> · <span>لا يظهر لغيرك</span>
+          </div>
+        )}
+        {!user.handle && (
+          <div className="w-full max-w-xs mt-2 space-y-2 text-right glass-panel p-3">
+            <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">اختر اسم مستخدم فريداً</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">يبحث به الآخرون عنك. لا يمكن تغييره بعد حفظه.</p>
+            <input
+              dir="ltr"
+              value={handleInput}
+              onChange={(e) => setHandleInput(e.target.value)}
+              placeholder="مثال: ahmed_99"
+              aria-label="اسم المستخدم"
+              maxLength={20}
+              autoCapitalize="none"
+              autoCorrect="off"
+              className={`${fieldCls} text-left`}
+            />
+            {handleState && (
+              <p role="status" className={`text-[11px] ${handleState.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                {handleState.msg}
+              </p>
+            )}
+            <button type="button" disabled={!handleState?.ok || handleBusy} onClick={saveHandle} className={`${primaryBtn} w-full`}>
+              {handleBusy ? 'جارٍ الحفظ...' : 'حفظ اسم المستخدم'}
+            </button>
           </div>
         )}
         <button
@@ -150,48 +274,9 @@ export const ProfileModal: React.FC<{
         </button>
         <p className="text-[11px] text-slate-500 dark:text-slate-400">شارك الـ ID مع أصدقائك ليبحثوا عنك به.</p>
       </div>
-      <div className="space-y-2.5 mb-5">
-        <label className="block">
-          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">الاسم</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} className={`${fieldCls} mt-1`} />
-        </label>
-        <label className="block">
-          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">الحالة</span>
-          <input
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            maxLength={60}
-            placeholder="مثل: في العمل، متاح، مشغول"
-            className={`${fieldCls} mt-1`}
-          />
-        </label>
-        <label className="block">
-          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">نبذة عنك</span>
-          <textarea
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-            maxLength={140}
-            rows={2}
-            className={`${fieldCls} mt-1 resize-none`}
-          />
-        </label>
-        {msg && (
-          <div className={`text-xs ${msg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-            {msg.text}
-          </div>
-        )}
-        <button
-          type="button"
-          disabled={busy || !name.trim()}
-          onClick={() => patch({ displayName: name, statusText: status, bio }, 'تم حفظ التغييرات')}
-          className="btn-glass w-full min-h-[44px] rounded-xl text-sm font-semibold disabled:opacity-50"
-        >
-          {busy ? 'جارٍ الحفظ...' : 'حفظ التغييرات'}
-        </button>
-      </div>
       <div className="grid grid-cols-2 gap-2.5">
-        <button type="button" onClick={onOpenThemes} className={ghostBtn}>
-          <Palette className="w-4 h-4" /> الثيمات
+        <button type="button" onClick={onOpenSettings} className={primaryBtn}>
+          <Settings className="w-4 h-4" /> الإعدادات
         </button>
         <button type="button" onClick={onOpenDevices} className={ghostBtn}>
           <Smartphone className="w-4 h-4" /> الأجهزة
@@ -200,14 +285,14 @@ export const ProfileModal: React.FC<{
           <LifeBuoy className="w-4 h-4" /> الدعم
         </button>
         {user.isAdmin ? (
-          <button type="button" onClick={onOpenAdmin} className={primaryBtn}>
+          <button type="button" onClick={onOpenAdmin} className={ghostBtn}>
             <Shield className="w-4 h-4" /> لوحة المطور
           </button>
         ) : (
           <button
             type="button"
             onClick={onLogout}
-            className={`${btn} bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100`}
+            className={`${dangerBtn}`}
           >
             <LogOut className="w-4 h-4" /> تسجيل الخروج
           </button>
@@ -217,80 +302,11 @@ export const ProfileModal: React.FC<{
         <button
           type="button"
           onClick={onLogout}
-          className={`${btn} w-full mt-2.5 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100`}
+          className={`${dangerBtn} w-full mt-2.5`}
         >
           <LogOut className="w-4 h-4" /> تسجيل الخروج
         </button>
       )}
-    </ModalShell>
-  );
-};
-
-/* -------------------------------- Themes -------------------------------- */
-
-export const ThemeModal: React.FC<{
-  current: string;
-  onApply: (id: string) => void;
-  onClose: () => void;
-}> = ({ current, onApply, onClose }) => {
-  const [picked, setPicked] = useState(current);
-  const [activeWp, setActiveWp] = useState(currentWallpaper());
-  return (
-    <ModalShell title="اختر الثيم" onClose={onClose}>
-      <div className="grid grid-cols-3 gap-3">
-        {THEMES.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => {
-              setPicked(t.id);
-              onApply(t.id); // live preview
-            }}
-            className="flex flex-col items-center gap-1.5"
-          >
-            <span
-              className={`relative block w-full aspect-[4/3] rounded-xl overflow-hidden border-2 ${
-                picked === t.id ? 'border-[color:var(--accent)]' : 'border-transparent'
-              }`}
-              style={{ background: t.preview }}
-            >
-              {picked === t.id && (
-                <span className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-[var(--accent)] text-white flex items-center justify-center">
-                  <Check className="w-3 h-3" />
-                </span>
-              )}
-            </span>
-            <span className="text-xs font-medium text-slate-800 dark:text-slate-200">{t.name}</span>
-          </button>
-        ))}
-      </div>
-      <p className="mt-4 text-[11px] text-slate-500 dark:text-slate-400">
-        خلفيات المحادثة تظهر في الوضع الداكن. غيّر الوضع الفاتح/الداكن من زر القمر.
-      </p>
-      <div className="mt-5">
-        <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">خلفية المحادثة</div>
-        <div className="grid grid-cols-3 gap-2">
-          {[{ id: '', name: 'الافتراضية', css: '' }, ...getWallpapers()].map((w) => (
-            <button
-              key={w.id || 'default'}
-              type="button"
-              onClick={() => {
-                applyWallpaper(w.id);
-                setActiveWp(w.id);
-              }}
-              className={`h-16 rounded-xl text-[11px] font-semibold text-white flex items-end justify-center pb-1.5 border-2 ${
-                activeWp === w.id ? 'border-[color:var(--accent)]' : 'border-white/10'
-              }`}
-              style={{ backgroundImage: w.css || 'linear-gradient(180deg,#1e293b,#0f172a)' }}
-            >
-              {w.name}
-            </button>
-          ))}
-        </div>
-      </div>
-      <button type="button" onClick={onClose} className="btn-glass w-full min-h-[44px] rounded-xl text-sm font-semibold mt-4">
-        تطبيق الثيم
-      </button>
     </ModalShell>
   );
 };
@@ -389,8 +405,7 @@ interface Stats {
 interface AdminUser {
   id: string;
   uid: string;
-  email: string;
-  legacyUsername: string;
+  handle: string;
   displayName: string;
   bio: string;
   banned: boolean;
@@ -404,7 +419,6 @@ interface AdminTicket {
   id: string;
   displayName: string;
   uid: string;
-  email: string;
   message: string;
   reply: string | null;
   status: string;
@@ -445,7 +459,7 @@ const UserRow: React.FC<{ u: AdminUser; api: Api; onChanged: () => void }> = ({ 
             {u.displayName} {u.isAdmin && '👑'}
           </span>
           <span dir="ltr" className="block text-[11px] text-slate-500 dark:text-slate-400 truncate text-right">
-            {u.email || `(${u.legacyUsername})`}
+            {u.handle ? `@${u.handle}` : 'بلا اسم مستخدم'}
           </span>
         </span>
         {u.banned && <span className="text-[10px] px-2 py-0.5 rounded-md bg-red-100 text-red-700">موقوف</span>}
@@ -503,7 +517,7 @@ const UserRow: React.FC<{ u: AdminUser; api: Api; onChanged: () => void }> = ({ 
                     call(`/api/admin/users/${encodeURIComponent(u.id)}`, { method: 'DELETE' }, 'تم حذف الحساب');
                   }
                 }}
-                className={`${btn} bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400`}
+                className={dangerBtn}
               >
                 <Trash2 className="w-3.5 h-3.5" /> حذف
               </button>
@@ -561,8 +575,26 @@ const TicketRow: React.FC<{ t: AdminTicket; api: Api; onChanged: () => void }> =
   );
 };
 
+interface AppSettingsState {
+  registrationOpen: boolean;
+  announcement: string;
+  maintenance: boolean;
+}
+
+interface AuditRow {
+  id: string;
+  action: string;
+  target: string | null;
+  detail: string;
+  created_at: string;
+  actor_name: string | null;
+}
+
 export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, onClose }) => {
-  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look'>('users');
+  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look' | 'settings' | 'audit'>('stats');
+  const [appSettings, setAppSettings] = useState<AppSettingsState | null>(null);
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+  const [audit, setAudit] = useState<AuditRow[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [tickets, setTickets] = useState<AdminTicket[]>([]);
@@ -580,6 +612,30 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
   useEffect(() => {
     if (tab === 'look') loadLook();
   }, [tab, loadLook]);
+
+  const loadSettings = useCallback(async () => {
+    const res = await api('/api/admin/settings');
+    if (res.ok) setAppSettings(((await res.json()) as { settings: AppSettingsState }).settings);
+  }, [api]);
+  const loadAudit = useCallback(async () => {
+    const res = await api('/api/admin/audit?limit=100');
+    if (res.ok) setAudit(((await res.json()) as { entries: AuditRow[] }).entries);
+  }, [api]);
+  useEffect(() => {
+    if (tab === 'settings') loadSettings();
+    if (tab === 'audit') loadAudit();
+  }, [tab, loadSettings, loadAudit]);
+
+  const saveSettings = async (patch: Partial<AppSettingsState>) => {
+    setSettingsMsg(null);
+    const res = await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(patch) });
+    if (!res.ok) {
+      setSettingsMsg(await readError(res, 'تعذر حفظ الإعدادات'));
+      return;
+    }
+    setAppSettings(((await res.json()) as { settings: AppSettingsState }).settings);
+    setSettingsMsg('تم الحفظ');
+  };
 
   const saveLook = async () => {
     setWpMsg(null);
@@ -633,33 +689,35 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
     return () => window.clearTimeout(t);
   }, [q, loadUsers]);
 
-  const statCards: [string, number | undefined][] = [
-    ['الحسابات', stats?.users],
-    ['متصل الآن', stats?.online],
-    ['المحادثات', stats?.conversations],
-    ['الرسائل', stats?.messages],
-    ['موقوفة', stats?.banned],
-    ['دعم مفتوح', stats?.openTickets],
+  const statCards: [string, number | undefined, React.ReactNode][] = [
+    ['الحسابات', stats?.users, <Users key="u" className="w-5 h-5" />],
+    ['متصل الآن', stats?.online, <Wifi key="o" className="w-5 h-5" />],
+    ['المحادثات', stats?.conversations, <MessagesSquare key="c" className="w-5 h-5" />],
+    ['الرسائل', stats?.messages, <MessageSquare key="m" className="w-5 h-5" />],
+    ['موقوفة', stats?.banned, <UserX key="b" className="w-5 h-5" />],
+    ['دعم مفتوح', stats?.openTickets, <LifeBuoy key="t" className="w-5 h-5" />],
   ];
 
   return (
     <ModalShell title="لوحة المطور" onClose={onClose} wide>
-      <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-white/5 rounded-xl mb-4">
+      <div role="tablist" aria-label="أقسام لوحة المطور" className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-3 -mx-1 px-1">
         {(
           [
+            ['stats', 'الإحصائيات'],
             ['users', 'الحسابات'],
             ['tickets', `الدعم${stats?.openTickets ? ` (${stats.openTickets})` : ''}`],
-            ['stats', 'الإحصائيات'],
+            ['settings', 'الإعدادات'],
             ['look', 'المظهر'],
+            ['audit', 'السجل'],
           ] as const
         ).map(([id, label]) => (
           <button
             key={id}
             type="button"
+            role="tab"
+            aria-selected={tab === id}
             onClick={() => setTab(id)}
-            className={`flex-1 min-h-[38px] text-xs font-semibold rounded-lg ${
-              tab === id ? 'bg-white dark:bg-[var(--d-surface2)] text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400'
-            }`}
+            className={`btn-glass ${tab === id ? '' : 'btn-ghost'} shrink-0 min-h-[44px] px-4 rounded-xl text-xs font-semibold whitespace-nowrap`}
           >
             {label}
           </button>
@@ -711,11 +769,79 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
 
       {tab === 'stats' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {statCards.map(([label, value]) => (
-            <div key={label} className="rounded-xl border border-slate-200 dark:border-white/10 p-4 text-center">
-              <Users className="w-4 h-4 mx-auto text-[color:var(--accent)] mb-1.5" />
+          {statCards.map(([label, value, icon]) => (
+            <div key={label} className="glass-panel p-4 text-center">
+              <div className="mx-auto mb-2 w-10 h-10 rounded-full flex items-center justify-center bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-[color:var(--accent)]">{icon}</div>
               <div className="text-2xl font-bold tabular-nums text-slate-900 dark:text-white">{value ?? '—'}</div>
               <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+
+      {tab === 'settings' && appSettings && (
+        <div className="space-y-3">
+          <label className="glass-panel flex items-center justify-between gap-3 p-3.5 min-h-[56px]">
+            <span className="text-sm text-slate-800 dark:text-slate-100">السماح بالتسجيل الجديد</span>
+            <input
+              type="checkbox"
+              checked={appSettings.registrationOpen}
+              onChange={(e) => saveSettings({ registrationOpen: e.target.checked })}
+              className="w-5 h-5 accent-[var(--accent)]"
+            />
+          </label>
+          <label className="glass-panel flex items-center justify-between gap-3 p-3.5 min-h-[56px]">
+            <span className="text-sm text-slate-800 dark:text-slate-100">وضع الصيانة (يمنع إرسال الرسائل)</span>
+            <input
+              type="checkbox"
+              checked={appSettings.maintenance}
+              onChange={(e) => saveSettings({ maintenance: e.target.checked })}
+              className="w-5 h-5 accent-[var(--accent)]"
+            />
+          </label>
+          <div className="glass-panel p-3.5 space-y-2">
+            <span className="text-sm text-slate-800 dark:text-slate-100">إعلان يظهر للجميع (فارغ = مخفي)</span>
+            <textarea
+              defaultValue={appSettings.announcement}
+              maxLength={300}
+              rows={2}
+              id="announcement-input"
+              className="field-glass w-full rounded-lg p-2 text-sm text-slate-900 dark:text-slate-100"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('announcement-input') as HTMLTextAreaElement | null;
+                saveSettings({ announcement: el?.value ?? '' });
+              }}
+              className="btn-glass min-h-[40px] px-4 rounded-lg text-xs font-semibold"
+            >
+              حفظ الإعلان
+            </button>
+          </div>
+          {settingsMsg && (
+            <p role="status" className="text-xs text-slate-600 dark:text-slate-300">
+              {settingsMsg}
+            </p>
+          )}
+        </div>
+      )}
+
+      {tab === 'audit' && (
+        <div className="space-y-2">
+          {audit.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-6">لا توجد إجراءات مسجّلة بعد</p>}
+          {audit.map((row) => (
+            <div key={row.id} className="rounded-lg border border-slate-200 dark:border-white/10 p-2.5 text-xs">
+              <div className="flex justify-between gap-2">
+                <span className="font-semibold text-slate-900 dark:text-white">{row.action}</span>
+                <span className="text-slate-500 dark:text-slate-400 tabular-nums">{new Date(row.created_at).toLocaleString('ar')}</span>
+              </div>
+              <div className="text-slate-600 dark:text-slate-300 mt-0.5">
+                بواسطة: {row.actor_name ?? 'غير معروف'}
+                {row.target ? ` · الهدف: ${row.target}` : ''}
+                {row.detail ? ` · ${row.detail}` : ''}
+              </div>
             </div>
           ))}
         </div>

@@ -13,11 +13,15 @@ export interface User {
   isAdmin: boolean;
   /** Present only on the signed-in user's own profile. */
   email?: string;
+  /** اسم المستخدم الفريد (يُختار مرة واحدة ولا يتغير). */
+  handle?: string;
+  /** من يرى حالاتي (يظهر في حسابي فقط). */
+  statusPrivacy?: 'contacts' | 'nobody';
+  /** دور العضو داخل مجموعة (يظهر فقط ضمن أعضاء المحادثة). */
+  role?: 'admin' | 'member';
   displayName: string;
   avatar: string;
   bio: string;
-  /** A short status line the person sets, e.g. "في العمل". */
-  statusText?: string;
   publicKey: string;
   online: boolean;
   lastSeen: string;
@@ -56,6 +60,10 @@ export interface Message {
   iv: string;
   status: DeliveryStatus;
   createdAt: string;
+  /** Set when the sender edited the message (ISO time of the last edit). */
+  editedAt?: string;
+  /** True when the message was deleted for everyone, or hidden for the current user. Its ciphertext is empty. */
+  deleted?: boolean;
   decrypted?: DecryptedMessagePayload;
 }
 
@@ -72,6 +80,8 @@ export interface Conversation {
   title: string;
   avatar: string;
   memberIds: string[];
+  /** معرّف مالك المجموعة (منشئها أو من انتقلت إليه الملكية). */
+  createdBy?: string;
   members: User[];
   unreadCount: number;
   updatedAt: string;
@@ -103,4 +113,30 @@ export interface ActiveCallState {
   cameraOff: boolean;
   speakerOn: boolean;
   fingerprint: string;
+}
+
+export interface StatusItem {
+  id: string;
+  userId: string;
+  type: 'text' | 'image';
+  text: string;
+  bg: string;
+  image: string;
+  createdAt: string;
+  expiresAt: string;
+  /** هل شاهدتَها (لحالات الآخرين). */
+  viewed?: boolean;
+  /** عدد المشاهدين (لحالاتي). */
+  viewCount?: number;
+}
+
+export interface StatusGroup {
+  user: User;
+  statuses: StatusItem[];
+  allViewed: boolean;
+}
+
+export interface StatusFeed {
+  mine: StatusItem[];
+  groups: StatusGroup[];
 }

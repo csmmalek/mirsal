@@ -1,204 +1,115 @@
 import React from 'react';
-import {
-  Bell,
-  LifeBuoy,
-  LogOut,
-  MessageCircle,
-  Moon,
-  Palette,
-  Shield,
-  Smartphone,
-  Sun,
-  User as UserIcon,
-  Settings,
-} from 'lucide-react';
-import type { User } from '../types/chat';
+import { CircleDashed, MessageCircle } from 'lucide-react';
+import { User } from '../types/chat';
+
+export type AppSection = 'chats' | 'status';
 
 interface SidebarNavProps {
   currentUser: User;
   totalUnread: number;
+  /** عدد أصحاب الحالات الذين لديهم حالة جديدة لم تُشاهد. */
+  statusUnseen: number;
+  /** إشعارات غير مقروءة: تظهر كنقطة على صورتي لأن سجل الإشعارات داخل الإعدادات. */
   unreadNotifications: number;
-  darkMode: boolean;
-  onToggleTheme: () => void;
-  onOpenNotifications: () => void;
-  onOpenDevices: () => void;
+  section: AppSection;
+  onSection: (s: AppSection) => void;
   onOpenProfile: () => void;
-  onOpenThemes: () => void;
-  onOpenSettings: () => void;
-  onOpenSupport: () => void;
-  onOpenAdmin: () => void;
-  onLogout: () => void;
   mobileHidden?: boolean;
 }
+
+const Badge: React.FC<{ n: number }> = ({ n }) =>
+  n > 0 ? (
+    <span key={n} className="badge-pop absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--accent)] text-[var(--on-accent)] text-[10px] font-bold flex items-center justify-center tabular-nums">
+      {n > 99 ? '99+' : n}
+    </span>
+  ) : null;
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({
   currentUser,
   totalUnread,
+  statusUnseen,
   unreadNotifications,
-  darkMode,
-  onToggleTheme,
-  onOpenNotifications,
-  onOpenDevices,
+  section,
+  onSection,
   onOpenProfile,
-  onOpenThemes,
-  onOpenSettings,
-  onOpenSupport,
-  onOpenAdmin,
-  onLogout,
   mobileHidden,
 }) => {
-  const railBtn = 'icon-btn text-slate-600 dark:text-slate-300';
+  const items = [
+    { id: 'chats' as const, label: 'المحادثات', icon: <MessageCircle className="w-5 h-5" />, badge: totalUnread },
+    { id: 'status' as const, label: 'الحالات', icon: <CircleDashed className="w-5 h-5" />, badge: statusUnseen },
+  ];
+
+  const profileAvatar = (size: string) => (
+    <span className="relative inline-block">
+      <img src={currentUser.avatar} alt="" className={`${size} rounded-full object-cover`} />
+      {unreadNotifications > 0 && (
+        <span aria-label="إشعارات جديدة" className="absolute -top-0.5 -left-0.5 w-3 h-3 rounded-full bg-[var(--accent)] border-2 border-white dark:border-[var(--d-surface)]" />
+      )}
+    </span>
+  );
+
   return (
     <>
-      {/* Desktop Vertical Rail */}
+      {/* Desktop vertical rail */}
       <nav
         aria-label="التنقل الرئيسي"
-        className="hidden md:flex flex-col items-center justify-between w-16 py-4 bg-white dark:bg-[var(--d-surface)] border-l border-slate-200 dark:border-slate-800 shrink-0"
+        className="hidden md:flex flex-col items-center justify-between w-16 py-4 bg-white dark:bg-[var(--d-surface)] border-l border-[var(--glass-border)] shrink-0"
       >
-        <div className="flex flex-col items-center gap-3">
-          <button
-            type="button"
-            onClick={onOpenProfile}
-            aria-label="الملف الشخصي"
-            title={`${currentUser.displayName} · ID ${currentUser.uid}`}
-            className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700"
-          >
-            <img
-              src={currentUser.avatar}
-              alt={currentUser.displayName}
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
-            />
-          </button>
-
-          <button
-            type="button"
-            aria-label="المحادثات"
-            title="المحادثات"
-            className="relative min-h-[44px] min-w-[44px] rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-[color:var(--accent)] dark:text-emerald-400 flex items-center justify-center"
-          >
-            <MessageCircle className="w-5 h-5" />
-            {totalUnread > 0 && (
-              <span className="absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-md bg-[var(--accent)] text-white text-[10px] font-bold tabular-nums flex items-center justify-center">
-                {totalUnread}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenNotifications}
-            aria-label="التنبيهات الفورية"
-            title="التنبيهات الفورية"
-            className="relative min-h-[44px] min-w-[44px] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors"
-          >
-            <Bell className="w-5 h-5" />
-            {unreadNotifications > 0 && (
-              <span className="absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-md bg-red-600 text-white text-[10px] font-bold tabular-nums flex items-center justify-center">
-                {unreadNotifications}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenDevices}
-            aria-label="الأجهزة المرتبطة"
-            title="الأجهزة المرتبطة والمزامنة"
-            className="min-h-[44px] min-w-[44px] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors"
-          >
-            <Smartphone className="w-5 h-5" />
-          </button>
-
-          <button type="button" onClick={onOpenSettings} aria-label="الإعدادات" title="الإعدادات" className="icon-btn" ><Settings className="w-5 h-5" /></button>
-          <button type="button" onClick={onOpenThemes} aria-label="الثيمات" title="الثيمات" className={railBtn}>
-            <Palette className="w-5 h-5" />
-          </button>
-          <button type="button" onClick={onOpenSupport} aria-label="الدعم" title="الدعم" className={railBtn}>
-            <LifeBuoy className="w-5 h-5" />
-          </button>
-          {currentUser.isAdmin && (
-            <button
-              type="button"
-              onClick={onOpenAdmin}
-              aria-label="لوحة المطور"
-              title="لوحة المطور"
-              className="min-h-[44px] min-w-[44px] rounded-xl text-amber-500 hover:bg-amber-500/10 flex items-center justify-center transition-colors"
-            >
-              <Shield className="w-5 h-5" />
-            </button>
-          )}
-        </div>
-
         <div className="flex flex-col items-center gap-2">
-          <button
-            type="button"
-            onClick={onToggleTheme}
-            aria-label={darkMode ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}
-            title={darkMode ? 'الوضع الفاتح' : 'الوضع الداكن'}
-            className="min-h-[44px] min-w-[44px] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors"
-          >
-            {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={onLogout}
-            aria-label="تبديل الحساب"
-            title="تبديل الحساب"
-            className="min-h-[44px] min-w-[44px] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 flex items-center justify-center transition-colors"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
+          <div className="w-10 h-10 mb-2 rounded-2xl flex items-center justify-center bg-[var(--accent)] text-[var(--on-accent)] shadow-[var(--glow)]" aria-hidden="true">
+            <MessageCircle className="w-5 h-5" />
+          </div>
+          {items.map((it) => (
+            <button
+              key={it.id}
+              type="button"
+              onClick={() => onSection(it.id)}
+              aria-label={it.label}
+              aria-current={section === it.id ? 'page' : undefined}
+              title={it.label}
+              className={`icon-btn relative text-slate-600 dark:text-slate-300 ${section === it.id ? 'is-active' : ''}`}
+            >
+              {it.icon}
+              <Badge n={it.badge} />
+            </button>
+          ))}
         </div>
+        <button type="button" onClick={onOpenProfile} aria-label="حسابي" title="حسابي" className="icon-btn !p-0">
+          {profileAvatar('w-9 h-9')}
+        </button>
       </nav>
 
-      {/* Mobile Bottom Navigation Bar (only shown on conversation list screen, <= 64px) */}
+      {/* Mobile bottom bar */}
       {!mobileHidden && (
         <nav
-          aria-label="شريط التنقل للجوال"
-          className="mobile-nav md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[var(--glass-bg-strong)] backdrop-blur-xl border-t border-[var(--glass-border)] grid grid-cols-4 items-center px-2"
+          aria-label="التنقل الرئيسي"
+          className="mobile-nav md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[var(--glass-bg-strong)] backdrop-blur-xl border-t border-[var(--glass-border)] grid grid-cols-3 items-center px-2"
         >
-          <button
-            type="button"
-            aria-label="المحادثات"
-            className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-[color:var(--accent)] dark:text-emerald-400"
-          >
-            <MessageCircle className="w-5 h-5" />
-            <span className="text-[10px] font-semibold">المحادثات</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenNotifications}
-            aria-label="التنبيهات"
-            className="relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-600 dark:text-slate-300"
-          >
-            <Bell className="w-5 h-5" />
-            <span className="text-[10px] font-medium">التنبيهات</span>
-            {unreadNotifications > 0 && (
-              <span className="absolute top-1.5 right-1/4 w-2 h-2 rounded-full bg-red-600" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            aria-label="الإعدادات"
-            className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-600 dark:text-slate-300"
-          >
-            <Settings className="w-5 h-5" />
-            <span className="text-[10px] font-medium">الإعدادات</span>
-          </button>
-
-
+          {items.map((it) => (
+            <button
+              key={it.id}
+              type="button"
+              onClick={() => onSection(it.id)}
+              aria-label={it.label}
+              aria-current={section === it.id ? 'page' : undefined}
+              className={`min-h-[48px] flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                section === it.id ? 'text-[color:var(--accent)] font-bold' : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              <span className="relative">
+                {it.icon}
+                <Badge n={it.badge} />
+              </span>
+              <span className="text-[10px] font-medium">{it.label}</span>
+            </button>
+          ))}
           <button
             type="button"
             onClick={onOpenProfile}
-            aria-label="الحساب"
-            className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-600 dark:text-slate-300"
+            aria-label="حسابي"
+            className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 text-slate-600 dark:text-slate-300"
           >
-            <UserIcon className="w-5 h-5" />
+            {profileAvatar('w-6 h-6')}
             <span className="text-[10px] font-medium">حسابي</span>
           </button>
         </nav>

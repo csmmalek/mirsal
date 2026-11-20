@@ -94,6 +94,47 @@ export const SCHEMA: string[] = [
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS admin_audit (
+    id TEXT PRIMARY KEY,
+    actor_id TEXT,
+    action TEXT NOT NULL,
+    target TEXT,
+    detail TEXT,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_audit_time ON admin_audit(created_at)`,
+  `CREATE TABLE IF NOT EXISTS statuses (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    bg TEXT NOT NULL DEFAULT '',
+    image TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_statuses_user ON statuses(user_id, expires_at)`,
+  `CREATE TABLE IF NOT EXISTS status_views (
+    status_id TEXT NOT NULL,
+    viewer_id TEXT NOT NULL,
+    viewed_at TEXT NOT NULL,
+    PRIMARY KEY (status_id, viewer_id),
+    FOREIGN KEY (status_id) REFERENCES statuses(id) ON DELETE CASCADE,
+    FOREIGN KEY (viewer_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_blocks (
+    blocker_id TEXT NOT NULL,
+    blocked_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (blocker_id, blocked_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS message_hidden (
+    message_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    hidden_at TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id)
+  )`,
 ];
 
 /** Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", so errors are ignored. */
@@ -101,13 +142,18 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN email TEXT`,
   `ALTER TABLE users ADD COLUMN uid TEXT`,
   `ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0`,
-  `ALTER TABLE users ADD COLUMN avatar_data TEXT`,
-  `ALTER TABLE users ADD COLUMN status_text TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE users ADD COLUMN avatar_url TEXT`,
+  `ALTER TABLE users ADD COLUMN handle TEXT`,
+  `ALTER TABLE users ADD COLUMN status_privacy TEXT NOT NULL DEFAULT 'contacts'`,
+  `ALTER TABLE conversation_members ADD COLUMN hidden_at TEXT`,
+  `ALTER TABLE messages ADD COLUMN edited_at TEXT`,
+  `ALTER TABLE messages ADD COLUMN deleted_at TEXT`,
 ];
 
 const INDEX_MIGRATIONS: string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid ON users(uid)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_handle ON users(handle)`,
 ];
 
 /** A random, unused 5-digit account ID (10000-99999). */

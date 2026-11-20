@@ -1,20 +1,40 @@
 apply plugin: 'com.android.application'
 
+// Signing and version come from environment variables set by CI (.github/workflows/apk.yml).
+// On a phone (AIDE) or without the variables, the build falls back to the old behaviour.
+def ksPath = System.getenv('ANDROID_KEYSTORE_PATH')
+def buildCode = System.getenv('APP_VERSION_CODE') ?: '1'
+def buildName = System.getenv('APP_VERSION_NAME') ?: '1.0'
+
 android {
     compileSdkVersion 28
     buildToolsVersion '28.0.3'
+
+    signingConfigs {
+        release {
+            if (ksPath) {
+                storeFile file(ksPath)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
 
     defaultConfig {
         applicationId 'app.mirsal.chat'
         minSdkVersion 21
         targetSdkVersion 28
-        versionCode 1
-        versionName '1.0'
+        versionCode Integer.parseInt(buildCode)
+        versionName buildName
     }
 
     buildTypes {
         release {
             minifyEnabled false
+            if (ksPath) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
