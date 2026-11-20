@@ -47,6 +47,7 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           SKIP_JDK_VERSION_CHECK: "true"
+          SKIP_JDK_VERSION_CHECK: "true"
           APP_VERSION_CODE: ${{ github.run_number }}
           APP_VERSION_NAME: "1.${{ github.run_number }}"
         with:
