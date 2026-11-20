@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 11
+          java-version: 17
 
       - name: Install Android SDK packages
         run: |
@@ -40,14 +40,17 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "platforms;android-28" "build-tools;28.0.3"
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 11
+
       - uses: gradle/gradle-build-action@v2
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          SKIP_JDK_VERSION_CHECK: "true"
-          SKIP_JDK_VERSION_CHECK: "true"
           APP_VERSION_CODE: ${{ github.run_number }}
           APP_VERSION_NAME: "1.${{ github.run_number }}"
         with:
