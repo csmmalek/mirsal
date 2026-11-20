@@ -1,5 +1,9 @@
 export interface Env {
   DB: D1Database;
+  /** Email verification via Resend. Secrets: RESEND_API_KEY, MAIL_FROM. EMAIL_VERIFICATION defaults to on; set to 'off' only for local dev. */
+  RESEND_API_KEY?: string;
+  MAIL_FROM?: string;
+  EMAIL_VERIFICATION?: string;
   HUB: DurableObjectNamespace;
   ASSETS: Fetcher;
   /** Optional: Cloudflare Calls TURN credentials so voice/video work on mobile networks. */

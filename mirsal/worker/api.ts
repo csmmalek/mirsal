@@ -22,6 +22,7 @@ import { ensureSchema, newUid } from './schema';
 import { isAdminEmail } from './admin';
 import { readWallpapers, sanitizeWallpapers, writeWallpapers } from './appearance';
 import { listAudit, readSettings, sanitizeSettings, writeAudit, writeSettings } from './settings';
+import { emailVerificationRequired, requestOtp, verifyOtp } from './otp';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
 
 interface Ctx {
@@ -59,6 +60,17 @@ function requireB64(v: unknown, label: string, max: number): string {
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
 
+const requestEmailCode: Handler = async ({ req, env }) => {
+  const b = await readJson(req);
+  const email = str(b.email, 120).trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) throw new HttpError(400, 'يرجى إدخال بريد إلكتروني صحيح');
+  if (!emailVerificationRequired(env)) return json({ ok: true, required: false });
+  const taken = await env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ?').bind(email).first();
+  if (taken) throw new HttpError(409, 'هذا البريد مسجّل مسبقاً، سجّل الدخول بدلاً من ذلك');
+  await requestOtp(env, email);
+  return json({ ok: true, required: true, expiresInSeconds: 600 });
+};
+
 const register: Handler = async ({ req, env }) => {
   if (!(await readSettings(env)).registrationOpen) throw new HttpError(403, 'التسجيل مغلق حالياً');
   const b = await readJson(req);
@@ -89,6 +101,9 @@ const register: Handler = async ({ req, env }) => {
   const taken = await env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ?').bind(email).first();
   if (taken) throw new HttpError(409, 'هذا البريد مسجّل مسبقاً، سجّل الدخول بدلاً من ذلك');
 
+  if (emailVerificationRequired(env)) {
+    await verifyOtp(env, email, str(b.code, 10).trim());
+  }
   const id = newId('user');
   const salt = randomToken(16);
   const now = nowIso();
@@ -1343,6 +1358,7 @@ const routes: Route[] = [
   { method: 'DELETE', pattern: /^\/api\/me\/avatar$/, handler: deleteAvatar },
   { method: 'GET', pattern: /^\/api\/users\/search$/, handler: searchUsers },
   { method: 'GET', pattern: /^\/api\/handle\/check$/, handler: checkHandle, public: true },
+  { method: 'POST', pattern: /^\/api\/auth\/otp\/request$/, handler: requestEmailCode, public: true },
   { method: 'PUT', pattern: /^\/api\/me\/handle$/, handler: setHandle },
   { method: 'GET', pattern: /^\/api\/blocks$/, handler: listBlocks },
   { method: 'POST', pattern: /^\/api\/blocks$/, handler: blockUser },

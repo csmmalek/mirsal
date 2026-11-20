@@ -334,6 +334,7 @@ export default function App() {
             body: JSON.stringify({
               email: p.email,
               setupCode: p.setupCode,
+              code: p.code,
               displayName: p.displayName,
               handle: p.handle,
               authSecret,

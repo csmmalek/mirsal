@@ -123,6 +123,13 @@ export const SCHEMA: string[] = [
     FOREIGN KEY (status_id) REFERENCES statuses(id) ON DELETE CASCADE,
     FOREIGN KEY (viewer_id) REFERENCES users(id) ON DELETE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS email_otps (
+    email TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS user_blocks (
     blocker_id TEXT NOT NULL,
     blocked_id TEXT NOT NULL,

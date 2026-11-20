@@ -41,6 +41,7 @@ const hubCalls: Array<{ path: string; body: unknown }> = [];
 const online = new Set<string>();
 const env: Env = {
   DB: makeD1(),
+  EMAIL_VERIFICATION: 'off', // existing tests register without mail; the OTP test below turns it on
   ASSETS: { fetch: async () => new Response('asset') },
   HUB: {
     idFromName: () => ({}),
@@ -505,4 +506,47 @@ test('clear chat for me, profile edit and account deletion', async () => {
   assert.equal((await call('DELETE', '/api/me', { authSecret: secret }, b.token)).status, 200);
   assert.equal((await call('GET', '/api/me', undefined, b.token)).status, 401);
   assert.equal((await call('POST', '/api/auth/login', { identifier: 'prb@test.dev', authSecret: secret })).status, 401);
+});
+
+test('email OTP: request, wrong/expired/reused codes, cooldown, and existing emails', async () => {
+  const { setMailSenderForTests } = await import('./mailer');
+  const sent: Record<string, string> = {};
+  setMailSenderForTests(async (to, _subject, text) => {
+    sent[to] = (text.match(/\d{6}/) || [''])[0];
+  });
+  env.EMAIL_VERIFICATION = 'on';
+  try {
+    const email = 'otp-user@test.dev';
+    const body = (code?: string) => ({ ...reg(email, 'Otp', 'otpuser'), code });
+
+    // Registering without a code is refused.
+    assert.equal((await call('POST', '/api/auth/register', body())).status, 400);
+
+    // Request a code; a second request inside 60s is refused.
+    assert.equal((await call('POST', '/api/auth/otp/request', { email })).status, 200);
+    assert.equal((await call('POST', '/api/auth/otp/request', { email })).status, 429);
+    const code = sent[email];
+    assert.match(code, /^\d{6}$/);
+
+    // Wrong code is refused and counts an attempt.
+    const wrong = code === '000000' ? '111111' : '000000';
+    assert.equal((await call('POST', '/api/auth/register', body(wrong))).status, 400);
+
+    // Correct code creates the account; the same code cannot be reused.
+    assert.equal((await call('POST', '/api/auth/register', body(code))).status, 200);
+    assert.equal((await call('POST', '/api/auth/register', { ...reg('otp-user2@test.dev', 'Two', 'otpuser2'), code })).status, 400);
+
+    // An email that already has an account cannot request a code.
+    assert.equal((await call('POST', '/api/auth/otp/request', { email })).status, 409);
+
+    // Too many wrong attempts lock the code.
+    const other = 'otp-lock@test.dev';
+    await call('POST', '/api/auth/otp/request', { email: other });
+    await env.DB.prepare('UPDATE email_otps SET created_at = ? WHERE email = ?').bind(new Date(Date.now() - 120000).toISOString(), other).run();
+    for (let i = 0; i < 5; i++) await call('POST', '/api/auth/register', { ...reg(other, 'L', 'lockuser'), code: '999999' });
+    assert.equal((await call('POST', '/api/auth/register', { ...reg(other, 'L', 'lockuser'), code: sent[other] })).status, 429);
+  } finally {
+    setMailSenderForTests(null);
+    env.EMAIL_VERIFICATION = 'off';
+  }
 });
