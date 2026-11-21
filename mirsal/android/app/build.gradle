@@ -29,6 +29,12 @@ android {
         versionName buildName
     }
 
+    // Lint crashes with an internal error on the CI's JDK (lintVitalRelease). Skip it for release builds.
+    lintOptions {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
     buildTypes {
         release {
             minifyEnabled false
