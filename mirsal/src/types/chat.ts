@@ -64,6 +64,8 @@ export interface Message {
   editedAt?: string;
   /** True when the message was deleted for everyone, or hidden for the current user. Its ciphertext is empty. */
   deleted?: boolean;
+  /** True while a failed message waits in the offline outbox and will be resent automatically. */
+  queued?: boolean;
   decrypted?: DecryptedMessagePayload;
 }
 

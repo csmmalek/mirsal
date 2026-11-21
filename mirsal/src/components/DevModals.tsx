@@ -79,6 +79,36 @@ function prepareAvatar(file: File): Promise<string> {
 }
 
 
+/** يعرف إن كان التطبيق يعمل داخل غلاف أندرويد (جسر MirsalAndroid) أو متصفح أندرويد. */
+const isAndroidDevice = (): boolean =>
+  Boolean((window as unknown as { MirsalAndroid?: unknown }).MirsalAndroid) ||
+  /Android/i.test(navigator.userAgent);
+
+/** إرشاد لإعدادات الهاتف كي لا يوقف النظام تطبيق الإشعارات. يظهر على أندرويد فقط. */
+const PhoneSetupHelp: React.FC = () => {
+  const [open, setOpen] = useState(true);
+  if (!isAndroidDevice()) return null;
+  return (
+    <section aria-labelledby="phone-setup-title" className="w-full max-w-xs mt-2 space-y-2 text-right glass-panel p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 id="phone-setup-title" className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+          لتصل الإشعارات بسرعة
+        </h3>
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className={`${ghostBtn} !min-h-[34px] !px-2.5 !text-[11px]`}>
+          {open ? 'إخفاء' : 'عرض الخطوات'}
+        </button>
+      </div>
+      {open && (
+        <ol className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 space-y-1.5 list-decimal pr-4">
+          <li>اسمح للتطبيق بالعمل في الخلفية: البطارية ← «بدون قيود» (Unrestricted).</li>
+          <li>فعّل التشغيل التلقائي: الإعدادات ← التطبيقات ← مِرسال ← التشغيل التلقائي.</li>
+          <li>ثبّت التطبيق في الذاكرة: افتح التطبيقات الأخيرة، ثم اضغط على القفل في بطاقة مِرسال إن ظهر على جهازك.</li>
+        </ol>
+      )}
+    </section>
+  );
+};
+
 export const ProfileModal: React.FC<{
   user: User;
   api: Api;
@@ -274,6 +304,7 @@ export const ProfileModal: React.FC<{
         </button>
         <p className="text-[11px] text-slate-500 dark:text-slate-400">شارك الـ ID مع أصدقائك ليبحثوا عنك به.</p>
       </div>
+      <PhoneSetupHelp />
       <div className="grid grid-cols-2 gap-2.5">
         <button type="button" onClick={onOpenSettings} className={primaryBtn}>
           <Settings className="w-4 h-4" /> الإعدادات

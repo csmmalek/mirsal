@@ -578,7 +578,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                     <span className="flex items-center gap-1">
                       {msg.status === 'failed' ? (
                         <>
-                          <span className="text-red-200 font-semibold">فشل الإرسال</span>
+                          <span className="text-red-200 font-semibold">
+                            {msg.queued ? 'سيُرسل تلقائياً عند عودة الاتصال' : 'فشل الإرسال'}
+                          </span>
                           <button
                             type="button"
                             onClick={() => onRetryMessage(msg)}

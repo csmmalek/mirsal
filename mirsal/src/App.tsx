@@ -10,7 +10,7 @@ import { DevicesModal, NewChatModal, NotificationsModal } from './components/Sid
 import { AdminModal, ProfileModal, SupportModal } from './components/DevModals';
 import { ChatInfoModal, ChatInfoActions } from './components/ChatInfoModal';
 import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
-import { createApi, errorMessage, readError } from './api/client';
+import { ApiError, createApi, errorMessage, readError } from './api/client';
 import type { StatusFeed } from './types/chat';
 import { SettingsModal } from './components/SettingsModal';
 import { StatusComposer, StatusPanel, StatusViewer } from './components/StatusPanel';
@@ -43,6 +43,7 @@ import {
   wrapPrivateKey,
 } from './utils/crypto';
 import { filterAndSortConversations, getTotalUnreadCount } from './utils/messaging';
+import { addToOutbox, loadOutbox, outboxKey, removeFromOutbox, type KeyValueStore } from './utils/outbox';
 
 interface AndroidBridge {
   setSession(baseUrl: string, token: string): void;
@@ -80,6 +81,18 @@ function deviceInfo(): { deviceName: string; deviceType: 'web' | 'android' } {
   if (androidBridge()) return { deviceName: 'تطبيق مِرسال للأندرويد', deviceType: 'android' };
   if (/Android/i.test(navigator.userAgent)) return { deviceName: 'متصفح الهاتف', deviceType: 'android' };
   return { deviceName: `متصفح الويب (${navigator.platform || 'Desktop'})`, deviceType: 'web' };
+}
+
+/** تخزين صندوق الإرسال المؤجل في المتصفح. محتواه مشفّر، ولا يحوي نصاً واضحاً. */
+const outboxStore: KeyValueStore = {
+  getItem: (k) => localStorage.getItem(k),
+  setItem: (k, v) => localStorage.setItem(k, v),
+};
+
+/** انقطاع الشبكة (0) أو 408 أو 429 أو خطأ خادم: فشل مؤقت تستحق الرسالة إعادة إرسالها لاحقاً. */
+function isTransientSendError(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  return err.status === 0 || err.status === 408 || err.status === 429 || err.status >= 500;
 }
 
 const newMsgId = () => `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -167,6 +180,7 @@ export default function App() {
   const devicesRef = useRef<DeviceSession[]>([]);
   devicesRef.current = devices;
   const soundRef = useRef(true);
+  const outboxFlushingRef = useRef(false);
   soundRef.current = soundEnabled;
 
   useEffect(() => {
@@ -300,8 +314,13 @@ export default function App() {
       const res = await api(`/api/conversations/${encodeURIComponent(convId)}/messages`);
       if (!res.ok) return;
       const json = (await res.json()) as { messages: Message[] };
-      const decrypted = await Promise.all(json.messages.map(decryptMessage));
-      setMessagesByConv((prev) => ({ ...prev, [convId]: decrypted }));
+      const decrypted: Message[] = await Promise.all(json.messages.map(decryptMessage));
+      // الرسائل الفاشلة التي لم تصل الخادم بعد تبقى ظاهرة (وفي الصندوق المؤجل) ولا تختفي عند التحديث.
+      setMessagesByConv((prev) => {
+        const serverIds = new Set(decrypted.map((m) => m.id));
+        const unsent = (prev[convId] || []).filter((m) => m.status === 'failed' && !serverIds.has(m.id));
+        return { ...prev, [convId]: [...decrypted, ...unsent].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) };
+      });
     },
     [api, decryptMessage]
   );
@@ -317,6 +336,7 @@ export default function App() {
       androidBridge()?.setSession(window.location.origin, token);
       setCurrentUser(user);
       await loadWorkspaceData();
+      void flushOutboxRef.current(user);
     },
     [loadWorkspaceData]
   );
@@ -477,6 +497,7 @@ export default function App() {
           androidBridge()?.setSession(window.location.origin, tokenRef.current!);
           setCurrentUser(data.user);
           await loadWorkspaceData();
+          void flushOutboxRef.current(data.user);
         } else if (res.status === 401) {
           clearSession();
         }
@@ -535,10 +556,10 @@ export default function App() {
       if (!user) return false;
       const id = newMsgId();
       const createdAt = new Date().toISOString();
-      const setStatus = (status: Message['status']) =>
+      const setStatus = (status: Message['status'], queued = false) =>
         setMessagesByConv((prev) => ({
           ...prev,
-          [convId]: (prev[convId] || []).map((m) => (m.id === id ? { ...m, status } : m)),
+          [convId]: (prev[convId] || []).map((m) => (m.id === id ? { ...m, status, queued } : m)),
         }));
 
       let ciphertext = '';
@@ -575,7 +596,7 @@ export default function App() {
             method: 'POST',
             body: JSON.stringify({ id, type, ciphertext, iv }),
           });
-          if (!res.ok) throw new Error(String(res.status));
+          if (!res.ok) throw new ApiError('', res.status);
           const { message } = (await res.json()) as { message: Message };
           // Never downgrade: the realtime echo may already have marked it delivered/read.
           setMessagesByConv((prev) => ({
@@ -584,8 +605,12 @@ export default function App() {
               m.id === id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
             ),
           }));
-        } catch {
-          setStatus('failed');
+        } catch (err) {
+          // انقطاع أو خطأ مؤقت: تُحفظ الرسالة المشفّرة نفسها (بالمعرّف نفسه) لتُرسل تلقائياً عند عودة الاتصال.
+          const queued =
+            isTransientSendError(err) &&
+            addToOutbox(outboxStore, outboxKey(user.id), { id, conversationId: convId, type, ciphertext, iv, createdAt });
+          setStatus('failed', queued);
         }
       })();
       return true;
@@ -698,10 +723,11 @@ export default function App() {
   const handleRetryMessage = useCallback(
     async (msg: Message) => {
       const convId = msg.conversationId;
-      const setStatus = (status: Message['status']) =>
+      const user = currentUserRef.current;
+      const setStatus = (status: Message['status'], queued = false) =>
         setMessagesByConv((prev) => ({
           ...prev,
-          [convId]: (prev[convId] || []).map((m) => (m.id === msg.id ? { ...m, status } : m)),
+          [convId]: (prev[convId] || []).map((m) => (m.id === msg.id ? { ...m, status, queued } : m)),
         }));
       setStatus('sending');
       try {
@@ -709,20 +735,119 @@ export default function App() {
           method: 'POST',
           body: JSON.stringify({ id: msg.id, type: msg.type, ciphertext: msg.ciphertext, iv: msg.iv }),
         });
-        if (!res.ok) throw new Error(String(res.status));
+        if (!res.ok) throw new ApiError('', res.status);
         const { message } = (await res.json()) as { message: Message };
+        if (user) removeFromOutbox(outboxStore, outboxKey(user.id), msg.id);
         setMessagesByConv((prev) => ({
           ...prev,
           [convId]: (prev[convId] || []).map((m) =>
-            m.id === msg.id && m.status === 'sending' ? { ...m, status: message.status, createdAt: message.createdAt } : m
+            m.id === msg.id && m.status === 'sending'
+              ? { ...m, status: message.status, createdAt: message.createdAt, queued: false }
+              : m
           ),
         }));
-      } catch {
-        setStatus('failed');
+      } catch (err) {
+        const queued =
+          user !== null &&
+          isTransientSendError(err) &&
+          addToOutbox(outboxStore, outboxKey(user.id), {
+            id: msg.id,
+            conversationId: convId,
+            type: msg.type,
+            ciphertext: msg.ciphertext,
+            iv: msg.iv,
+            createdAt: msg.createdAt,
+          });
+        setStatus('failed', queued);
       }
     },
     [api]
   );
+
+  /**
+   * يرسل الرسائل المؤجلة بالترتيب. يعمل مرة واحدة في كل لحظة (بالـ ref)، ويتوقف عند انقطاع الشبكة أو خطأ مؤقت
+   * في الخادم أو انتهاء الجلسة، فتبقى العناصر لمحاولة لاحقة. الخادم يتجاهل المعرّف المكرر، فإعادة الإرسال آمنة.
+   */
+  const flushOutbox = useCallback(
+    async (userArg?: User) => {
+      const user = userArg ?? currentUserRef.current;
+      if (!user || !tokenRef.current || outboxFlushingRef.current) return;
+      outboxFlushingRef.current = true;
+      const key = outboxKey(user.id);
+      try {
+        for (const item of loadOutbox(outboxStore, key)) {
+          let res: Response;
+          try {
+            res = await api(`/api/conversations/${encodeURIComponent(item.conversationId)}/messages`, {
+              method: 'POST',
+              body: JSON.stringify({ id: item.id, type: item.type, ciphertext: item.ciphertext, iv: item.iv }),
+            });
+          } catch {
+            break; // الشبكة ما زالت مقطوعة: تبقى الرسائل للمحاولة التالية
+          }
+          if (res.status === 401) break; // الجلسة منتهية: تبقى العناصر، وتسجّل api الخروج
+          if (!res.ok) {
+            if (res.status === 408 || res.status === 429 || res.status >= 500) break; // خطأ مؤقت
+            // خطأ دائم (4xx): لن تنجح هذه الرسالة أبداً، فنحذفها ونوقف وسم الانتظار
+            removeFromOutbox(outboxStore, key, item.id);
+            patchMessage(item.conversationId, item.id, (m) => ({ ...m, queued: false }));
+            continue;
+          }
+          const json = (await res.json().catch(() => null)) as { message?: Message } | null;
+          removeFromOutbox(outboxStore, key, item.id);
+          const status = json?.message?.status ?? 'sent';
+          const createdAt = json?.message?.createdAt ?? item.createdAt;
+          // إن لم تكن الرسالة في القائمة (بعد إعادة فتح التطبيق) نضيفها بعد فك تشفيرها بالمفتاح نفسه.
+          const decrypted = await decryptMessage({
+            id: item.id,
+            conversationId: item.conversationId,
+            senderId: user.id,
+            senderName: user.displayName,
+            type: item.type as MessageType,
+            ciphertext: item.ciphertext,
+            iv: item.iv,
+            status,
+            createdAt,
+          });
+          setMessagesByConv((prev) => {
+            const list = prev[item.conversationId] || [];
+            if (list.some((m) => m.id === item.id)) return prev;
+            return {
+              ...prev,
+              [item.conversationId]: [...list, decrypted].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+            };
+          });
+          patchMessage(item.conversationId, item.id, (m) =>
+            m.status === 'failed' ? { ...m, status, createdAt, queued: false } : m
+          );
+        }
+      } finally {
+        outboxFlushingRef.current = false;
+      }
+    },
+    [api, decryptMessage, patchMessage]
+  );
+  const flushOutboxRef = useRef(flushOutbox);
+  flushOutboxRef.current = flushOutbox;
+
+  // أعد الإرسال عند عودة الشبكة، وعند ظهور التبويب مجدداً، وكل 30 ثانية كاحتياط.
+  useEffect(() => {
+    if (!currentUser) return;
+    const run = () => {
+      void flushOutboxRef.current();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') run();
+    };
+    window.addEventListener('online', run);
+    document.addEventListener('visibilitychange', onVisible);
+    const timer = window.setInterval(run, 30_000);
+    return () => {
+      window.removeEventListener('online', run);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.clearInterval(timer);
+    };
+  }, [currentUser?.id]);
 
   /** Ends local call state; the caller's device writes the call record into the chat. */
   const finishCall = useCallback(
@@ -908,6 +1033,7 @@ export default function App() {
       ws.onopen = () => {
         if (unmounted) return;
         ws.send(JSON.stringify({ type: 'auth:hello', token: tokenRef.current }));
+        void flushOutboxRef.current();
         heartbeat = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) ws.send('ping');
         }, 25_000);
