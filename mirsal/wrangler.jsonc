@@ -1,5 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  "vars": { "GOOGLE_CLIENT_ID": "198210100682-b1u3bb8ue87gea39kv099smmes693mm2.apps.googleusercontent.com" },
   "name": "mirsal",
   "main": "worker/index.ts",
   "compatibility_date": "2025-09-01",
