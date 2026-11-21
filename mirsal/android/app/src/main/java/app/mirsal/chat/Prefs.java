@@ -13,7 +13,13 @@ final class Prefs {
         return c.getApplicationContext().getSharedPreferences(FILE, Context.MODE_PRIVATE);
     }
 
-    static String baseUrl(Context c) { return sp(c).getString("base_url", ""); }
+    /** The server the app opens by default; the user never has to type it. */
+    static final String DEFAULT_BASE_URL = "https://mirsal.csmcom.workers.dev";
+
+    static String baseUrl(Context c) {
+        String s = sp(c).getString("base_url", "");
+        return s.isEmpty() ? DEFAULT_BASE_URL : s;
+    }
     static void setBaseUrl(Context c, String v) { sp(c).edit().putString("base_url", v).apply(); }
 
     static String token(Context c) { return sp(c).getString("token", ""); }

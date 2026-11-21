@@ -89,7 +89,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, go
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#F4F6F8] dark:bg-[var(--d-bg)] flex items-center justify-center p-4 md:p-8">
+    <div className="min-h-screen w-full bg-gradient-to-br from-violet-200 via-fuchsia-100 to-sky-200 dark:from-[#1b1245] dark:via-[#2a0f3d] dark:to-[#0b1117] flex items-center justify-center p-4 md:p-8">
       <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 bg-white dark:bg-[var(--d-surface)] border border-slate-200 dark:border-white/10 rounded-3xl overflow-hidden shadow-xl">
         <div
           className="p-8 md:p-10 text-white flex flex-col justify-between gap-8"

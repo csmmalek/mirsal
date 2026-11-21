@@ -103,6 +103,14 @@ export const SCHEMA: string[] = [
     created_at TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_audit_time ON admin_audit(created_at)`,
+  `CREATE TABLE IF NOT EXISTS error_log (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status INTEGER NOT NULL,
+    message TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_error_time ON error_log(created_at)`,
   `CREATE TABLE IF NOT EXISTS statuses (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

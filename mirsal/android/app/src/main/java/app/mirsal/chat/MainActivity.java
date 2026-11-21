@@ -7,6 +7,7 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -43,8 +44,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Vivid gradient behind the page, visible while it loads.
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[] {0xFF1B1245, 0xFF7C3AED, 0xFF0EA5E9});
+        getWindow().setBackgroundDrawable(bg);
         web = new WebView(this);
-        web.setBackgroundColor(Color.parseColor("#0B1117"));
+        web.setBackgroundColor(Color.TRANSPARENT);
         setContentView(web, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         configureWebView();

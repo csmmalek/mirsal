@@ -22,6 +22,7 @@ import { ensureSchema, newUid } from './schema';
 import { isAdminEmail } from './admin';
 import { readWallpapers, sanitizeWallpapers, writeWallpapers } from './appearance';
 import { listAudit, readSettings, sanitizeSettings, writeAudit, writeSettings } from './settings';
+import { healthChecks, listErrors, logError } from './diagnostics';
 import { emailVerificationRequired, requestOtp, verifyOtp } from './otp';
 import { verifyGoogleCredential } from './google';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
@@ -270,6 +271,16 @@ const adminPutSettings: Handler = async ({ req, env, auth }) => {
   const changed = (Object.keys(next) as (keyof typeof next)[]).filter((k) => next[k] !== current[k]);
   if (changed.length) await writeAudit(env, a.userId, 'settings.update', null, changed.join(','));
   return json({ settings: next });
+};
+
+const adminListErrors: Handler = async ({ env, auth }) => {
+  await requireAdmin(env, auth);
+  return json({ errors: await listErrors(env) });
+};
+
+const adminHealth: Handler = async ({ env, auth }) => {
+  await requireAdmin(env, auth);
+  return json({ checks: await healthChecks(env) });
 };
 
 const adminListAudit: Handler = async ({ env, auth, url }) => {
@@ -1447,6 +1458,8 @@ const routes: Route[] = [
   { method: 'GET', pattern: /^\/api\/admin\/settings$/, handler: adminGetSettings },
   { method: 'PUT', pattern: /^\/api\/admin\/settings$/, handler: adminPutSettings },
   { method: 'GET', pattern: /^\/api\/admin\/audit$/, handler: adminListAudit },
+  { method: 'GET', pattern: /^\/api\/admin\/errors$/, handler: adminListErrors },
+  { method: 'GET', pattern: /^\/api\/admin\/health$/, handler: adminHealth },
   { method: 'GET', pattern: /^\/api\/settings$/, handler: getPublicSettings, public: true },
   { method: 'GET', pattern: /^\/api\/admin\/users$/, handler: adminListUsers },
   { method: 'PATCH', pattern: /^\/api\/admin\/users\/([\w-]+)$/, handler: adminPatchUser },
@@ -1473,8 +1486,13 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
     }
     return json({ error: pathMatched ? 'الطريقة غير مدعومة' : 'غير موجود' }, pathMatched ? 405 : 404);
   } catch (err) {
-    if (err instanceof HttpError) return json({ error: err.message }, err.status);
+    const path = new URL(req.url).pathname;
+    if (err instanceof HttpError) {
+      if (err.status >= 500) await logError(env, path, err.status, err.message);
+      return json({ error: err.message }, err.status);
+    }
     console.error('API error', err);
+    await logError(env, path, 500, err instanceof Error ? err.message : String(err));
     return json({ error: 'حدث خطأ في الخادم' }, 500);
   }
 }

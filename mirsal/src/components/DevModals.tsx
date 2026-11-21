@@ -622,7 +622,7 @@ interface AuditRow {
 }
 
 export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, onClose }) => {
-  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look' | 'settings' | 'audit'>('stats');
+  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look' | 'settings' | 'audit' | 'health' | 'errors'>('stats');
   const [appSettings, setAppSettings] = useState<AppSettingsState | null>(null);
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
   const [audit, setAudit] = useState<AuditRow[]>([]);
@@ -706,6 +706,16 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
     const res = await api('/api/admin/tickets');
     if (res.ok) setTickets(((await res.json()) as { tickets: AdminTicket[] }).tickets);
   }, [api]);
+  const [health, setHealth] = useState<{ name: string; ok: boolean; note: string }[]>([]);
+  const [serverErrors, setServerErrors] = useState<{ id: string; created_at: string; path: string; status: number; message: string }[]>([]);
+  const loadHealth = useCallback(async () => {
+    const res = await api('/api/admin/health');
+    if (res.ok) setHealth(((await res.json()) as { checks: typeof health }).checks);
+  }, [api]);
+  const loadErrors = useCallback(async () => {
+    const res = await api('/api/admin/errors');
+    if (res.ok) setServerErrors(((await res.json()) as { errors: typeof serverErrors }).errors);
+  }, [api]);
   const loadStats = useCallback(async () => {
     const res = await api('/api/admin/stats');
     if (res.ok) setStats((await res.json()) as Stats);
@@ -715,6 +725,10 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
     loadStats();
     loadTickets();
   }, [loadStats, loadTickets]);
+  useEffect(() => {
+    if (tab === 'health') loadHealth();
+    if (tab === 'errors') loadErrors();
+  }, [tab, loadHealth, loadErrors]);
   useEffect(() => {
     const t = window.setTimeout(() => loadUsers(q.trim()), 250);
     return () => window.clearTimeout(t);
@@ -740,6 +754,8 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
             ['settings', 'الإعدادات'],
             ['look', 'المظهر'],
             ['audit', 'السجل'],
+            ['health', 'الفحص'],
+            ['errors', 'الأخطاء'],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -856,6 +872,37 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
               {settingsMsg}
             </p>
           )}
+        </div>
+      )}
+
+      {tab === 'health' && (
+        <div className="space-y-2">
+          {health.map((c) => (
+            <div key={c.name} className="flex items-start gap-2 rounded-lg border border-slate-200 dark:border-white/10 p-2.5 text-xs">
+              <span className={`font-bold ${c.ok ? 'text-emerald-600' : 'text-red-600'}`}>{c.ok ? '✓' : '✗'}</span>
+              <div>
+                <div className="font-semibold text-slate-900 dark:text-white">{c.name}</div>
+                <div className="text-slate-600 dark:text-slate-300">{c.note}</div>
+              </div>
+            </div>
+          ))}
+          <button type="button" onClick={loadHealth} className="btn-glass w-full min-h-[44px] rounded-xl text-xs font-semibold">تحديث الفحص</button>
+        </div>
+      )}
+
+      {tab === 'errors' && (
+        <div className="space-y-2">
+          {serverErrors.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-6">لا توجد أخطاء مسجّلة</p>}
+          {serverErrors.map((row) => (
+            <div key={row.id} className="rounded-lg border border-slate-200 dark:border-white/10 p-2.5 text-xs">
+              <div className="flex justify-between gap-2">
+                <span className="font-semibold text-red-600" dir="ltr">{row.status} · {row.path}</span>
+                <span className="text-slate-500 dark:text-slate-400 tabular-nums">{new Date(row.created_at).toLocaleString('ar')}</span>
+              </div>
+              <div className="text-slate-600 dark:text-slate-300 mt-0.5">{row.message}</div>
+            </div>
+          ))}
+          <button type="button" onClick={loadErrors} className="btn-glass w-full min-h-[44px] rounded-xl text-xs font-semibold">تحديث</button>
         </div>
       )}
 
