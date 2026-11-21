@@ -49,7 +49,8 @@ export const GoogleButton: React.FC<{ onCredential: (credential: string) => void
             if (++attempts < 30) timer = window.setTimeout(init, 300);
             return;
           }
-          id.initialize({ client_id: clientId, callback: (r: { credential: string }) => callback.current(r.credential) });
+          // Popup mode keeps the user on this page. Redirect mode leaves the site and can end on accounts.google.com/gsi/transform.
+          id.initialize({ client_id: clientId, ux_mode: 'popup', callback: (r: { credential: string }) => callback.current(r.credential) });
           id.renderButton(ref.current, { theme: 'outline', size: 'large', text: 'continue_with', locale: 'ar', width: 320 });
         };
         init();
