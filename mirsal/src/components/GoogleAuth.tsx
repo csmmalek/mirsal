@@ -143,7 +143,7 @@ export const GoogleRegisterPanel: React.FC<{
       </div>
       <div>
         <label htmlFor="g-handle" className={labelCls}>اسم المستخدم</label>
-        <input id="g-handle" dir="ltr" value={handle} onChange={(ev) => setHandle(ev.target.value)} placeholder="@username" className={`${inputCls} text-left`} />
+        <input id="g-handle" dir="ltr" value={handle} onChange={(ev) => setHandle(ev.target.value)} placeholder="your_handle" className={`${inputCls} text-left`} />
       </div>
       <div>
         <label htmlFor="g-new-pass" className={labelCls}>رمز التشفير (8 أحرف على الأقل)</label>

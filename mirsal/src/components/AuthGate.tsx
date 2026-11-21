@@ -225,7 +225,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, go
                     autoComplete="email"
                     value={email}
                     onChange={(ev) => setEmail(ev.target.value)}
-                    placeholder="name@example.com"
+                    placeholder="you@mail.com"
                     className={`${inputCls} pr-9 text-left`}
                   />
                 </div>
@@ -266,7 +266,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, go
                     id="auth-displayname"
                     value={displayName}
                     onChange={(ev) => setDisplayName(ev.target.value)}
-                    placeholder="أحمد العبدالله"
+                    placeholder="اسمك الذي يراه الآخرون"
                     className={inputCls}
                   />
                 </div>
@@ -284,7 +284,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, go
                     maxLength={20}
                     value={handle}
                     onChange={(ev) => setHandle(ev.target.value)}
-                    placeholder="ahmed_99"
+                    placeholder="your_handle"
                     className={`${inputCls} text-left`}
                   />
                   <p className={`text-[11px] mt-1 ${handleCheck ? (handleCheck.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400') : 'text-slate-500 dark:text-slate-400'}`}>
