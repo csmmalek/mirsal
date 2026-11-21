@@ -23,6 +23,7 @@ import { isAdminEmail } from './admin';
 import { readWallpapers, sanitizeWallpapers, writeWallpapers } from './appearance';
 import { listAudit, readSettings, sanitizeSettings, writeAudit, writeSettings } from './settings';
 import { healthChecks, listErrors, logError } from './diagnostics';
+import { createReport, listReports, setReportStatus } from './reports';
 import { emailVerificationRequired, requestOtp, verifyOtp } from './otp';
 import { verifyGoogleCredential } from './google';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
@@ -271,6 +272,27 @@ const adminPutSettings: Handler = async ({ req, env, auth }) => {
   const changed = (Object.keys(next) as (keyof typeof next)[]).filter((k) => next[k] !== current[k]);
   if (changed.length) await writeAudit(env, a.userId, 'settings.update', null, changed.join(','));
   return json({ settings: next });
+};
+
+const reportCreate: Handler = async ({ req, env, auth }) => {
+  if (!auth) throw new HttpError(401, 'سجّل الدخول أولاً');
+  await createReport(env, auth.userId, await readJson(req));
+  return json({ ok: true });
+};
+
+const adminListReports: Handler = async ({ env, auth }) => {
+  await requireAdmin(env, auth);
+  return json({ reports: await listReports(env) });
+};
+
+const adminResolveReport: Handler = async ({ req, env, auth, params }) => {
+  const admin = await requireAdmin(env, auth);
+  const b = await readJson(req);
+  const status = str(b.status, 20);
+  if (status !== 'resolved' && status !== 'dismissed') throw new HttpError(400, 'حالة البلاغ غير صالحة');
+  await setReportStatus(env, params[0], status);
+  await writeAudit(env, admin.userId, `report.${status}`, params[0]);
+  return json({ ok: true });
 };
 
 const adminListErrors: Handler = async ({ env, auth }) => {
@@ -1459,6 +1481,9 @@ const routes: Route[] = [
   { method: 'PUT', pattern: /^\/api\/admin\/settings$/, handler: adminPutSettings },
   { method: 'GET', pattern: /^\/api\/admin\/audit$/, handler: adminListAudit },
   { method: 'GET', pattern: /^\/api\/admin\/errors$/, handler: adminListErrors },
+  { method: 'POST', pattern: /^\/api\/reports$/, handler: reportCreate },
+  { method: 'GET', pattern: /^\/api\/admin\/reports$/, handler: adminListReports },
+  { method: 'PATCH', pattern: /^\/api\/admin\/reports\/([\w-]+)$/, handler: adminResolveReport },
   { method: 'GET', pattern: /^\/api\/admin\/health$/, handler: adminHealth },
   { method: 'GET', pattern: /^\/api\/settings$/, handler: getPublicSettings, public: true },
   { method: 'GET', pattern: /^\/api\/admin\/users$/, handler: adminListUsers },

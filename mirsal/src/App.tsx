@@ -388,6 +388,29 @@ export default function App() {
     [api, finishLogin]
   );
 
+  // Reports a message to the developer. The server stores only ids and the reason, never the text.
+  const handleReport = useCallback(
+    async (msg: Message, reason: string): Promise<string | null> => {
+      try {
+        const res = await api('/api/reports', {
+          method: 'POST',
+          body: JSON.stringify({
+            messageId: msg.id,
+            conversationId: msg.conversationId,
+            targetUserId: msg.senderId,
+            reason,
+          }),
+        });
+        if (res.ok) return null;
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        return data.error ?? 'تعذر إرسال البلاغ';
+      } catch {
+        return 'تعذر الاتصال، حاول بعد قليل';
+      }
+    },
+    [api]
+  );
+
   // Google sign-in: an existing account asks for its passphrase; a new one asks for a username and a passphrase.
   const handleGoogle = useCallback(
     async (credential: string) => {
@@ -1515,6 +1538,7 @@ export default function App() {
           onRetryMessage={handleRetryMessage}
           onEditMessage={handleEditMessage}
           onDeleteMessage={handleDeleteMessage}
+          onReport={handleReport}
           onTyping={handleTyping}
           onStartCall={handleStartCall}
           onOpenChatInfo={() => setActiveModal('chat_info')}

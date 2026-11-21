@@ -111,6 +111,19 @@ export const SCHEMA: string[] = [
     message TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_error_time ON error_log(created_at)`,
+  `CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    reporter_id TEXT NOT NULL,
+    target_user_id TEXT,
+    message_id TEXT,
+    conversation_id TEXT,
+    reason TEXT NOT NULL,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_reports_time ON reports(created_at)`,
   `CREATE TABLE IF NOT EXISTS statuses (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

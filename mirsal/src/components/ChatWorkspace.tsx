@@ -12,6 +12,7 @@ import {
   Lock,
   Mic,
   MoreVertical,
+  Flag,
   Paperclip,
   Phone,
   Pencil,
@@ -42,6 +43,8 @@ interface ChatWorkspaceProps {
   onEditMessage: (msg: Message, text: string) => Promise<string | null>;
   /** تحذف رسالة (لي أو للجميع)؛ تعيد نص الخطأ أو null عند النجاح. */
   onDeleteMessage: (msg: Message, scope: 'me' | 'all') => Promise<string | null>;
+  /** يبلّغ عن رسالة شخص آخر؛ تعيد نص الخطأ أو null عند النجاح. */
+  onReport: (msg: Message, reason: string) => Promise<string | null>;
   onTyping: (isTyping: boolean) => void;
   onStartCall: (kind: 'audio' | 'video') => void;
   onOpenChatInfo: () => void;
@@ -87,6 +90,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   onRetryMessage,
   onEditMessage,
   onDeleteMessage,
+  onReport,
   onTyping,
   onStartCall,
   onOpenChatInfo,
@@ -855,6 +859,28 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                     <Reply className="w-4 h-4" />
                     <span>رد</span>
                   </button>
+                  {([
+                    ['spam', 'إبلاغ: رسالة مزعجة'],
+                    ['harassment', 'إبلاغ: مضايقة'],
+                    ['other', 'إبلاغ: سبب آخر'],
+                  ] as const).map(([reason, label]) => (
+                    <button
+                      key={reason}
+                      type="button"
+                      disabled={menuBusy}
+                      className={item}
+                      onClick={async () => {
+                        setMenuBusy(true);
+                        const err = await onReport(m, reason);
+                        setMenuBusy(false);
+                        setMediaError(err ?? 'تم إرسال البلاغ، شكراً لك');
+                        close();
+                      }}
+                    >
+                      <Flag className="w-4 h-4" />
+                      <span>{label}</span>
+                    </button>
+                  ))}
                   {text && (
                     <button
                       type="button"

@@ -622,7 +622,7 @@ interface AuditRow {
 }
 
 export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, onClose }) => {
-  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look' | 'settings' | 'audit' | 'health' | 'errors'>('stats');
+  const [tab, setTab] = useState<'users' | 'tickets' | 'stats' | 'look' | 'settings' | 'audit' | 'health' | 'errors' | 'reports'>('stats');
   const [appSettings, setAppSettings] = useState<AppSettingsState | null>(null);
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
   const [audit, setAudit] = useState<AuditRow[]>([]);
@@ -716,6 +716,18 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
     const res = await api('/api/admin/errors');
     if (res.ok) setServerErrors(((await res.json()) as { errors: typeof serverErrors }).errors);
   }, [api]);
+  const [reports, setReports] = useState<{ id: string; reason: string; note: string | null; status: string; created_at: string; reporter_name: string | null; target_name: string | null }[]>([]);
+  const loadReports = useCallback(async () => {
+    const res = await api('/api/admin/reports');
+    if (res.ok) setReports(((await res.json()) as { reports: typeof reports }).reports);
+  }, [api]);
+  const resolveReport = useCallback(
+    async (id: string, status: 'resolved' | 'dismissed') => {
+      const res = await api(`/api/admin/reports/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      if (res.ok) loadReports();
+    },
+    [api, loadReports]
+  );
   const loadStats = useCallback(async () => {
     const res = await api('/api/admin/stats');
     if (res.ok) setStats((await res.json()) as Stats);
@@ -728,7 +740,8 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
   useEffect(() => {
     if (tab === 'health') loadHealth();
     if (tab === 'errors') loadErrors();
-  }, [tab, loadHealth, loadErrors]);
+    if (tab === 'reports') loadReports();
+  }, [tab, loadHealth, loadErrors, loadReports]);
   useEffect(() => {
     const t = window.setTimeout(() => loadUsers(q.trim()), 250);
     return () => window.clearTimeout(t);
@@ -755,6 +768,7 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
             ['look', 'المظهر'],
             ['audit', 'السجل'],
             ['health', 'الفحص'],
+            ['reports', 'البلاغات'],
             ['errors', 'الأخطاء'],
           ] as const
         ).map(([id, label]) => (
@@ -903,6 +917,31 @@ export const AdminModal: React.FC<{ api: Api; onClose: () => void }> = ({ api, o
             </div>
           ))}
           <button type="button" onClick={loadErrors} className="btn-glass w-full min-h-[44px] rounded-xl text-xs font-semibold">تحديث</button>
+        </div>
+      )}
+
+      {tab === 'reports' && (
+        <div className="space-y-2">
+          {reports.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-6">لا توجد بلاغات</p>}
+          {reports.map((r) => (
+            <div key={r.id} className="rounded-lg border border-slate-200 dark:border-white/10 p-2.5 text-xs space-y-1.5">
+              <div className="flex justify-between gap-2">
+                <span className="font-semibold text-slate-900 dark:text-white">{r.reason}</span>
+                <span className={r.status === 'open' ? 'text-amber-600' : 'text-slate-500'}>{r.status === 'open' ? 'مفتوح' : r.status === 'resolved' ? 'تم الحل' : 'مرفوض'}</span>
+              </div>
+              <div className="text-slate-600 dark:text-slate-300">
+                من: {r.reporter_name ?? 'غير معروف'} · على: {r.target_name ?? 'غير معروف'}
+              </div>
+              {r.note && <div className="text-slate-600 dark:text-slate-300">{r.note}</div>}
+              <div className="text-slate-500 tabular-nums">{new Date(r.created_at).toLocaleString('ar')}</div>
+              {r.status === 'open' && (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => resolveReport(r.id, 'resolved')} className="btn-glass flex-1 min-h-[40px] rounded-lg text-xs font-semibold">تم الحل</button>
+                  <button type="button" onClick={() => resolveReport(r.id, 'dismissed')} className="btn-ghost flex-1 min-h-[40px] rounded-lg text-xs font-semibold">رفض البلاغ</button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
