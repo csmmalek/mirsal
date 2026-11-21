@@ -47,6 +47,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, go
   const [handleCheck, setHandleCheck] = useState<{ ok: boolean; msg: string } | null>(null);
   const [password, setPassword] = useState('');
   const [setupCode, setSetupCode] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const h = handle.trim().toLowerCase().replace(/^@/, '');
+
+  // Live username availability (public endpoint), debounced.
   useEffect(() => {
     if (mode !== 'register' || !h) {
       setHandleCheck(null);
