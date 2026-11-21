@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, X } from 'lucide-react';
 import { AuthGate, type AuthParams } from './components/AuthGate';
+import type { GoogleFlow, GoogleRegisterValues } from './components/GoogleAuth';
 import { CallOverlay } from './components/CallOverlay';
 import { ChatWorkspace } from './components/ChatWorkspace';
 import { ConversationList } from './components/ConversationList';
@@ -88,6 +89,7 @@ export default function App() {
   const [booting, setBooting] = useState(() => Boolean(localStorage.getItem(LS.token)));
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [googleFlow, setGoogleFlow] = useState<GoogleFlow | null>(null);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -364,6 +366,100 @@ export default function App() {
       }
     },
     [api, finishLogin]
+  );
+
+  // Google sign-in: an existing account asks for its passphrase; a new one asks for a username and a passphrase.
+  const handleGoogle = useCallback(
+    async (credential: string) => {
+      setAuthLoading(true);
+      setAuthError(null);
+      try {
+        const res = await api('/api/auth/google', {
+          method: 'POST',
+          body: JSON.stringify({ credential, ...deviceInfo() }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'تعذر تسجيل الدخول بـ Google');
+        if (data.needsRegistration) {
+          setGoogleFlow({ kind: 'register', credential, email: data.email, displayName: data.displayName ?? '' });
+        } else {
+          setGoogleFlow({
+            kind: 'unlock',
+            email: data.email,
+            user: data.user,
+            token: data.token,
+            deviceId: data.deviceId,
+            encryptedPrivateKey: data.encryptedPrivateKey,
+            privateKeyIv: data.privateKeyIv,
+          });
+        }
+      } catch (err) {
+        setAuthError(err instanceof Error ? err.message : 'تعذر تسجيل الدخول بـ Google');
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    [api]
+  );
+
+  const handleGoogleUnlock = useCallback(
+    async (passphrase: string) => {
+      if (!googleFlow || googleFlow.kind !== 'unlock') return;
+      setAuthLoading(true);
+      setAuthError(null);
+      try {
+        const { wrapKey } = await deriveFromPassword(googleFlow.email, passphrase);
+        let priv: string;
+        try {
+          priv = await unwrapPrivateKey(googleFlow.encryptedPrivateKey, googleFlow.privateKeyIv, wrapKey);
+        } catch {
+          throw new Error('رمز التشفير غير صحيح');
+        }
+        setGoogleFlow(null);
+        await finishLogin(googleFlow.user as User, googleFlow.token, googleFlow.deviceId, priv);
+      } catch (err) {
+        setAuthError(err instanceof Error ? err.message : 'تعذر فتح الحساب');
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    [api, finishLogin, googleFlow]
+  );
+
+  const handleGoogleRegister = useCallback(
+    async (values: GoogleRegisterValues) => {
+      if (!googleFlow || googleFlow.kind !== 'register') return;
+      setAuthLoading(true);
+      setAuthError(null);
+      try {
+        const { authSecret, wrapKey } = await deriveFromPassword(googleFlow.email, values.passphrase);
+        const kp = await generateIdentityKeyPair();
+        const wrapped = await wrapPrivateKey(kp.privateKeyJwk, wrapKey);
+        const res = await api('/api/auth/google', {
+          method: 'POST',
+          body: JSON.stringify({
+            credential: googleFlow.credential,
+            displayName: values.displayName,
+            handle: values.handle,
+            setupCode: values.setupCode,
+            authSecret,
+            publicKey: kp.publicKeyJwk,
+            encryptedPrivateKey: wrapped.ciphertext,
+            privateKeyIv: wrapped.iv,
+            ...deviceInfo(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'تعذر إنشاء الحساب');
+        setGoogleFlow(null);
+        await finishLogin(data.user, data.token, data.deviceId, kp.privateKeyJwk);
+      } catch (err) {
+        setAuthError(err instanceof Error ? err.message : 'تعذر إنشاء الحساب');
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    [api, finishLogin, googleFlow]
   );
 
   // Restore a saved session on startup
@@ -1209,7 +1305,21 @@ export default function App() {
   }
 
   if (!currentUser) {
-    return <AuthGate onSubmit={handleAuth} loading={authLoading} error={authError} />;
+    return (
+      <AuthGate
+        onSubmit={handleAuth}
+        loading={authLoading}
+        error={authError}
+        google={googleFlow}
+        onGoogle={handleGoogle}
+        onGoogleUnlock={handleGoogleUnlock}
+        onGoogleRegister={handleGoogleRegister}
+        onGoogleCancel={() => {
+          setGoogleFlow(null);
+          setAuthError(null);
+        }}
+      />
+    );
   }
 
   return (

@@ -4,6 +4,8 @@ export interface Env {
   RESEND_API_KEY?: string;
   MAIL_FROM?: string;
   EMAIL_VERIFICATION?: string;
+  /** Google sign-in: the OAuth client id (not secret). */
+  GOOGLE_CLIENT_ID?: string;
   HUB: DurableObjectNamespace;
   ASSETS: Fetcher;
   /** Optional: Cloudflare Calls TURN credentials so voice/video work on mobile networks. */

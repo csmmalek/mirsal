@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { KeyRound, Lock, LogIn, Mail, ShieldCheck, Smartphone, UserPlus } from 'lucide-react';
 import { ADMIN_EMAIL } from '../constants';
+import {
+  GoogleButton,
+  GoogleRegisterPanel,
+  GoogleUnlockPanel,
+  type GoogleFlow,
+  type GoogleRegisterValues,
+} from './GoogleAuth';
 
 export interface AuthParams {
   mode: 'login' | 'register';
@@ -19,6 +26,11 @@ interface AuthGateProps {
   onSubmit: (params: AuthParams) => Promise<void>;
   loading: boolean;
   error: string | null;
+  google: GoogleFlow | null;
+  onGoogle: (credential: string) => void;
+  onGoogleUnlock: (passphrase: string) => void;
+  onGoogleRegister: (values: GoogleRegisterValues) => void;
+  onGoogleCancel: () => void;
 }
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
@@ -27,7 +39,7 @@ const inputCls =
   'field-glass w-full min-h-[46px] px-3.5 py-2 rounded-xl text-sm text-slate-900 dark:text-slate-100';
 const labelCls = 'block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5';
 
-export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) => {
+export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, google, onGoogle, onGoogleUnlock, onGoogleRegister, onGoogleCancel }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -175,7 +187,30 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error }) 
               </div>
             )}
 
-            <form onSubmit={submit} className="space-y-3.5">
+            {google?.kind === 'unlock' && (
+              <GoogleUnlockPanel email={google.email} loading={loading} onSubmit={onGoogleUnlock} onCancel={onGoogleCancel} />
+            )}
+            {google?.kind === 'register' && (
+              <GoogleRegisterPanel
+                email={google.email}
+                initialName={google.displayName}
+                loading={loading}
+                onSubmit={onGoogleRegister}
+                onCancel={onGoogleCancel}
+              />
+            )}
+            {!google && (
+              <div className="space-y-3">
+                <GoogleButton onCredential={onGoogle} />
+                <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                  <span className="flex-1 h-px bg-slate-200 dark:bg-white/10" />
+                  أو بالبريد وكلمة المرور
+                  <span className="flex-1 h-px bg-slate-200 dark:bg-white/10" />
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={submit} className="space-y-3.5" hidden={google !== null}>
               <div>
                 <label htmlFor="auth-email" className={labelCls}>
                   البريد الإلكتروني

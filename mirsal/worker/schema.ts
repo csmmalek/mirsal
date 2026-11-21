@@ -152,6 +152,7 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN avatar_url TEXT`,
   `ALTER TABLE users ADD COLUMN handle TEXT`,
   `ALTER TABLE users ADD COLUMN status_privacy TEXT NOT NULL DEFAULT 'contacts'`,
+  `ALTER TABLE users ADD COLUMN google_sub TEXT`,
   `ALTER TABLE conversation_members ADD COLUMN hidden_at TEXT`,
   `ALTER TABLE messages ADD COLUMN edited_at TEXT`,
   `ALTER TABLE messages ADD COLUMN deleted_at TEXT`,

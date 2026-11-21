@@ -23,6 +23,7 @@ import { isAdminEmail } from './admin';
 import { readWallpapers, sanitizeWallpapers, writeWallpapers } from './appearance';
 import { listAudit, readSettings, sanitizeSettings, writeAudit, writeSettings } from './settings';
 import { emailVerificationRequired, requestOtp, verifyOtp } from './otp';
+import { verifyGoogleCredential } from './google';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
 
 interface Ctx {
@@ -71,11 +72,11 @@ const requestEmailCode: Handler = async ({ req, env }) => {
   return json({ ok: true, required: true, expiresInSeconds: 600 });
 };
 
-const register: Handler = async ({ req, env }) => {
-  if (!(await readSettings(env)).registrationOpen) throw new HttpError(403, 'التسجيل مغلق حالياً');
-  const b = await readJson(req);
-  const email = str(b.email, 120).trim().toLowerCase();
-  if (!EMAIL_RE.test(email)) throw new HttpError(400, 'يرجى إدخال بريد إلكتروني صحيح');
+/**
+ * Creates an account once its email is proven: by a one-time code (googleSub null) or by a Google ID token.
+ * Google accounts store Google's stable id, so later Google sign-ins find the same account.
+ */
+async function createAccount(env: Env, b: Record<string, unknown>, email: string, googleSub: string | null): Promise<Response> {
   const displayName = str(b.displayName, 40).trim() || email.split('@')[0];
   const handle = normalizeHandle(b.handle);
   const handleError = validateHandle(handle);
@@ -101,7 +102,7 @@ const register: Handler = async ({ req, env }) => {
   const taken = await env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ?').bind(email).first();
   if (taken) throw new HttpError(409, 'هذا البريد مسجّل مسبقاً، سجّل الدخول بدلاً من ذلك');
 
-  if (emailVerificationRequired(env)) {
+  if (googleSub === null && emailVerificationRequired(env)) {
     await verifyOtp(env, email, str(b.code, 10).trim());
   }
   const id = newId('user');
@@ -126,10 +127,19 @@ const register: Handler = async ({ req, env }) => {
     }
   }
   if (!created) throw new HttpError(500, 'تعذر إنشاء الحساب، حاول مرة أخرى');
+  if (googleSub) await env.DB.prepare('UPDATE users SET google_sub = ? WHERE id = ?').bind(googleSub, id).run();
 
   const { token, deviceId } = await createDevice(env, id, str(b.deviceName, 80), str(b.deviceType, 20));
   const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<Record<string, unknown>>();
   return json({ user: mapUser(row!, new Set([id]), true), token, deviceId });
+}
+
+const register: Handler = async ({ req, env }) => {
+  if (!(await readSettings(env)).registrationOpen) throw new HttpError(403, 'التسجيل مغلق حالياً');
+  const b = await readJson(req);
+  const email = str(b.email, 120).trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) throw new HttpError(400, 'يرجى إدخال بريد إلكتروني صحيح');
+  return createAccount(env, b, email, null);
 };
 
 const login: Handler = async ({ req, env }) => {
@@ -162,6 +172,44 @@ const login: Handler = async ({ req, env }) => {
     privateKeyIv: String(row.enc_private_iv),
   });
 };
+
+/**
+ * Sign in or sign up with Google. Google has already verified the email, so no code is sent.
+ * - Known Google account: returns the wrapped private key; the app asks for the encryption passphrase.
+ * - New account: first returns { needsRegistration: true }; the app then asks for a handle and a passphrase
+ *   and calls again with the same credential plus the new account's keys.
+ */
+const googleAuth: Handler = async ({ req, env }) => {
+  const b = await readJson(req);
+  const identity = await verifyGoogleCredential(env, str(b.credential, 4096));
+  const row = await env.DB.prepare('SELECT * FROM users WHERE google_sub = ?')
+    .bind(identity.sub)
+    .first<Record<string, unknown>>();
+
+  if (!row) {
+    const samePassword = await env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ? AND google_sub IS NULL')
+      .bind(identity.email)
+      .first();
+    if (samePassword) throw new HttpError(409, 'هذا البريد مسجّل بكلمة مرور، سجّل الدخول بها بدلاً من Google');
+    if (!(await readSettings(env)).registrationOpen) throw new HttpError(403, 'التسجيل مغلق حالياً');
+    if (!b.authSecret) return json({ needsRegistration: true, email: identity.email, displayName: identity.name });
+    return createAccount(env, b, identity.email, identity.sub);
+  }
+
+  if (Number(row.banned) === 1) throw new HttpError(403, 'تم إيقاف هذا الحساب. تواصل مع المطور');
+  const { token, deviceId } = await createDevice(env, String(row.id), str(b.deviceName, 80), str(b.deviceType, 20));
+  const online = await getOnlineUserIds(env);
+  return json({
+    user: mapUser(row, online, true),
+    email: identity.email,
+    token,
+    deviceId,
+    encryptedPrivateKey: String(row.enc_private_key),
+    privateKeyIv: String(row.enc_private_iv),
+  });
+};
+
+const authConfig: Handler = async ({ env }) => json({ googleClientId: env.GOOGLE_CLIENT_ID ?? null });
 
 const logout: Handler = async ({ env, auth }) => {
   const a = requireAuth(auth);
@@ -1352,6 +1400,8 @@ const routes: Route[] = [
   { method: 'GET', pattern: /^\/api\/health$/, handler: async () => json({ ok: true, time: nowIso() }), public: true },
   { method: 'POST', pattern: /^\/api\/auth\/register$/, handler: register, public: true },
   { method: 'POST', pattern: /^\/api\/auth\/login$/, handler: login, public: true },
+  { method: 'POST', pattern: /^\/api\/auth\/google$/, handler: googleAuth, public: true },
+  { method: 'GET', pattern: /^\/api\/auth\/config$/, handler: authConfig, public: true },
   { method: 'POST', pattern: /^\/api\/auth\/logout$/, handler: logout },
   { method: 'GET', pattern: /^\/api\/me$/, handler: me },
   { method: 'PUT', pattern: /^\/api\/me\/avatar$/, handler: putAvatar },
