@@ -45,4 +45,11 @@ android {
     }
 }
 
+// lintVitalRelease runs inside assembleRelease and crashes on the CI's JDK. Disable only that task.
+tasks.whenTaskAdded { task ->
+    if (task.name.startsWith('lintVital')) {
+        task.enabled = false
+    }
+}
+
 // No third-party dependencies on purpose: the project builds on a phone in AIDE.
