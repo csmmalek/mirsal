@@ -47,49 +47,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, go
   const [handleCheck, setHandleCheck] = useState<{ ok: boolean; msg: string } | null>(null);
   const [password, setPassword] = useState('');
   const [setupCode, setSetupCode] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpLeft, setOtpLeft] = useState(0);
-  const [otpBusy, setOtpBusy] = useState(false);
-  const [otpNote, setOtpNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (otpLeft <= 0) return;
-    const t = window.setTimeout(() => setOtpLeft((n) => n - 1), 1000);
-    return () => window.clearTimeout(t);
-  }, [otpLeft]);
-
-  /** يطلب رمز التحقق من الخادم؛ الخطأ يظهر بالعربية كما يرسله الخادم. */
-  const sendCode = async () => {
-    setOtpNote(null);
-    if (!EMAIL_RE.test(e)) return setOtpNote('يرجى إدخال بريد إلكتروني صحيح أولاً');
-    setOtpBusy(true);
-    try {
-      const res = await fetch('/api/auth/otp/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: e }),
-      });
-      const d = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        setOtpNote(d.error || 'تعذر إرسال الرمز، حاول لاحقاً');
-        if (res.status === 429) setOtpLeft(60);
-        return;
-      }
-      setOtpSent(true);
-      setOtpLeft(60);
-      setOtpNote('أرسلنا رمز التحقق إلى بريدك. صالح لمدة 10 دقائق.');
-    } catch {
-      setOtpNote('تعذر الاتصال بالخادم، تحقق من الإنترنت');
-    } finally {
-      setOtpBusy(false);
-    }
-  };
-  const [localError, setLocalError] = useState<string | null>(null);
-
-  const h = handle.trim().toLowerCase().replace(/^@/, '');
-
-  // Live username availability (public endpoint), debounced.
   useEffect(() => {
     if (mode !== 'register' || !h) {
       setHandleCheck(null);
@@ -120,11 +77,10 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, go
       if (handleCheck && !handleCheck.ok) return setLocalError(handleCheck.msg);
       if (password.length < 8) return setLocalError('كلمة المرور يجب ألا تقل عن 8 أحرف');
       if (isAdminEmail && !setupCode.trim()) return setLocalError('أدخل رمز إعداد المطور');
-      if (!/^\d{6}$/.test(otpCode.trim())) return setLocalError('أدخل رمز التحقق المكوّن من 6 أرقام');
     } else if (!e || !password) {
       return setLocalError('يرجى إدخال البريد الإلكتروني وكلمة المرور');
     }
-    await onSubmit({ mode, email: e, password, displayName: displayName.trim(), handle: h, setupCode: setupCode.trim(), code: otpCode.trim() });
+    await onSubmit({ mode, email: e, password, displayName: displayName.trim(), handle: h, setupCode: setupCode.trim() });
   };
 
   return (
@@ -230,33 +186,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onSubmit, loading, error, go
                   />
                 </div>
               </div>
-              {mode === 'register' && (
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={sendCode}
-                    disabled={otpBusy || otpLeft > 0}
-                    className="btn-glass btn-ghost w-full min-h-[44px] rounded-xl text-xs font-semibold"
-                  >
-                    {otpBusy ? 'جارٍ الإرسال...' : otpLeft > 0 ? `إعادة الإرسال بعد ${otpLeft} ث` : otpSent ? 'إعادة إرسال الرمز' : 'إرسال رمز التحقق إلى بريدي'}
-                  </button>
-                  {otpNote && <p role="status" className="text-[11px] text-slate-600 dark:text-slate-300">{otpNote}</p>}
-                  <label htmlFor="auth-otp" className={labelCls}>
-                    رمز التحقق
-                  </label>
-                  <input
-                    id="auth-otp"
-                    dir="ltr"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    value={otpCode}
-                    onChange={(ev) => setOtpCode(ev.target.value.replace(/\D/g, ''))}
-                    placeholder="000000"
-                    className={`${inputCls} text-center tracking-[0.4em] text-lg`}
-                  />
-                </div>
-              )}
               {mode === 'register' && (
                 <div>
                   <label htmlFor="auth-displayname" className={labelCls}>

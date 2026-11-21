@@ -7,7 +7,8 @@ const RESEND_COOLDOWN_MS = 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
 export function emailVerificationRequired(env: Env): boolean {
-  return (env.EMAIL_VERIFICATION ?? 'on') !== 'off';
+  // Off unless EMAIL_VERIFICATION=on is set: email codes need a verified sender, so they are not required by default.
+  return env.EMAIL_VERIFICATION === 'on';
 }
 
 async function sha256Hex(text: string): Promise<string> {
