@@ -13,6 +13,7 @@ import { DEFAULT_THEME, THEMES, applyTheme } from './themes';
 import { ApiError, createApi, errorMessage, readError } from './api/client';
 import type { StatusFeed } from './types/chat';
 import { SettingsModal } from './components/SettingsModal';
+import { AssistantModal } from './components/AssistantModal';
 import { StatusComposer, StatusPanel, StatusViewer } from './components/StatusPanel';
 import type { AppSection } from './components/SidebarNav';
 import { PublicSettings, StatusBanner } from './components/StatusBanner';
@@ -122,6 +123,7 @@ export default function App() {
   const [statusComposer, setStatusComposer] = useState(false);
 
   const [activeModal, setActiveModal] = useState<
+  const [assistantOpen, setAssistantOpen] = useState(false);
     null | 'new_chat' | 'devices' | 'notifications' | 'chat_info' | 'profile' | 'themes' | 'settings' | 'support' | 'admin'
   >(null);
   const [chatFingerprint, setChatFingerprint] = useState('');
@@ -1669,6 +1671,17 @@ export default function App() {
         />
       )}
       {activeModal === 'settings' && (
+        {currentUser && (
+          <button
+            type="button"
+            onClick={() => setAssistantOpen(true)}
+            aria-label="المساعد"
+            className="fixed bottom-28 start-4 z-40 rounded-full px-4 py-2 bg-[var(--accent)] text-[var(--on-accent)] shadow-lg text-sm font-bold"
+          >
+            المساعد
+          </button>
+        )}
+        <AssistantModal open={assistantOpen} onClose={() => setAssistantOpen(false)} api={api} />
         <SettingsModal
           user={currentUser}
           api={api}
