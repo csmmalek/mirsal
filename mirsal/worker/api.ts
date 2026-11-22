@@ -950,7 +950,7 @@ async function removeMemberCore(env: Env, convId: string, userId: string): Promi
   const conv = await env.DB.prepare('SELECT created_by FROM conversations WHERE id = ?').bind(convId).first<{ created_by: string }>();
   await env.DB.prepare('DELETE FROM conversation_members WHERE conversation_id = ? AND user_id = ?').bind(convId, userId).run();
   const { results } = await env.DB.prepare(
-    "SELECT user_id, role FROM conversation_members WHERE conversation_id = ? ORDER BY (role = 'admin') DESC, rowid ASC"
+    "SELECT user_id, role FROM conversation_members WHERE conversation_id = ? ORDER BY (role = 'admin') DESC, user_id ASC"
   )
     .bind(convId)
     .all<{ user_id: string; role: string }>();
@@ -1303,9 +1303,9 @@ const adminListUsers: Handler = async ({ env, auth, url }) => {
        FROM users u WHERE u.uid = ? OR u.handle = ? OR LOWER(u.display_name) LIKE ? ESCAPE '\\'
        ORDER BY u.created_at DESC LIMIT 60`
     : `SELECT u.*, (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id) AS devices
-       FROM users u WHERE ? = ? AND ? = ? ORDER BY u.created_at DESC LIMIT 60`;
+       FROM users u ORDER BY u.created_at DESC LIMIT 60`;
   const stmt = env.DB.prepare(sql);
-  const { results } = await (q ? stmt.bind(q, q, like) : stmt.bind(1, 1, 1, 1)).all<Record<string, unknown>>();
+  const { results } = await (q ? stmt.bind(q, q, like) : stmt).all<Record<string, unknown>>();
   const online = await getOnlineUserIds(env);
   return json({
     users: results.map((r) => ({
