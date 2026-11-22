@@ -30,6 +30,22 @@ interface NetlifyEvent {
 }
 
 export const handler = async (event: NetlifyEvent) => {
+  // أداة تشخيص: تفحص وجود DATABASE_URL والاتصال بقاعدة البيانات، دون أن تعرض الرابط أو كلمة المرور.
+  if (new URL(event.rawUrl).pathname === '/api/diag') {
+    let db = 'ok';
+    try {
+      await DB.prepare('SELECT 1 AS x').first();
+    } catch (err) {
+      db = 'error: ' + String((err as Error)?.message || err).slice(0, 300);
+    }
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ hasDatabaseUrl: !!process.env.DATABASE_URL, db }),
+      isBase64Encoded: false,
+    };
+  }
+
   const headers = new Headers();
   for (const [k, v] of Object.entries(event.headers || {})) {
     if (v) headers.set(k, v);
