@@ -1,5 +1,6 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import { IQGame } from './iq/IQGame';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 import { initAppearance } from './appearance';
@@ -9,7 +10,7 @@ initPreferences();
 initAppearance();
 createRoot(document.getElementById('root')!).render(
   <ErrorBoundary>
-    <App />
+    {location.pathname.replace(/\/+$/, '') === '/iq' ? <IQGame /> : <App />}
   </ErrorBoundary>
 );
 

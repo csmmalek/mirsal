@@ -409,3 +409,10 @@ html[data-btn="outline"] .send-btn { color: var(--accent); background: transpare
 html.dark { --ring-gap: var(--d-surface); }
 @keyframes status-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .status-progress { transform-origin: right center; animation: status-progress var(--dur, 5s) linear forwards; }
+
+/* اختبار الذكاء الفيزيائي */
+@keyframes iq-fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes iq-spin { to { transform: rotate(360deg); } }
+.iq-fade { animation: iq-fade 0.35s ease-out both; }
+.iq-orbit { animation: iq-spin 8s linear infinite; border-top-color: rgba(34, 211, 238, 0.9); }
+.iq-orbit-rev { animation: iq-spin 5s linear infinite reverse; border-bottom-color: rgba(167, 139, 250, 0.9); }
