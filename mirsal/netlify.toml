@@ -1,0 +1,17 @@
+[build]
+  command = "npm install && npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# طلبات الـ API تذهب إلى الدالة
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+# أي مسار آخر يعيد واجهة التطبيق
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

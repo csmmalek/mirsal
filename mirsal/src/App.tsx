@@ -1047,6 +1047,22 @@ export default function App() {
     if (!currentUser) return;
     let unmounted = false;
     let heartbeat: number | undefined;
+    // Fallback when the realtime socket is unavailable (e.g. Netlify, which has no WebSocket):
+    // refresh the data every few seconds instead.
+    let pollTimer: number | undefined;
+    const startPolling = () => {
+      if (pollTimer !== undefined) return;
+      pollTimer = window.setInterval(() => {
+        if (unmounted) return;
+        void loadWorkspaceData();
+        if (activeConvIdRef.current) void loadMessagesForConversation(activeConvIdRef.current);
+      }, 4000);
+    };
+    const stopPolling = () => {
+      if (pollTimer === undefined) return;
+      window.clearInterval(pollTimer);
+      pollTimer = undefined;
+    };
 
     const connect = () => {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1055,6 +1071,7 @@ export default function App() {
 
       ws.onopen = () => {
         if (unmounted) return;
+        stopPolling();
         ws.send(JSON.stringify({ type: 'auth:hello', token: tokenRef.current }));
         void flushOutboxRef.current();
         heartbeat = window.setInterval(() => {
@@ -1066,6 +1083,7 @@ export default function App() {
         window.clearInterval(heartbeat);
         if (unmounted) return;
         setWsConnected(false);
+        startPolling();
         reconnectTimerRef.current = window.setTimeout(connect, 2500);
       };
 
@@ -1306,6 +1324,7 @@ export default function App() {
     return () => {
       unmounted = true;
       window.clearInterval(heartbeat);
+      stopPolling();
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
       wsRef.current?.close();
     };
