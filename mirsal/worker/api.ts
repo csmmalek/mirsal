@@ -26,6 +26,7 @@ import { healthChecks, listErrors, logError } from './diagnostics';
 import { createReport, listReports, setReportStatus } from './reports';
 import { emailVerificationRequired, requestOtp, verifyOtp } from './otp';
 import { verifyGoogleCredential } from './google';
+import { askAssistant } from './assistant';
 import { HttpError, json, newId, nowIso, randomToken, readJson, str, timingSafeEqual } from './util';
 
 interface Ctx {
@@ -327,6 +328,18 @@ function validateHandle(handle: string): string | null {
 async function handleTaken(env: Env, handle: string): Promise<boolean> {
   return !!(await env.DB.prepare('SELECT 1 AS x FROM users WHERE handle = ?').bind(handle).first());
 }
+
+const assistantChat: Handler = async ({ req, env }) => {
+  const b = await readJson(req);
+  const message = str(b.message, 1000).trim();
+  if (!message) throw new HttpError(400, 'اكتب سؤالك أولاً');
+  try {
+    return json({ reply: await askAssistant(env, message) });
+  } catch (err) {
+    console.error('assistant failed', err);
+    throw new HttpError(502, 'المساعد غير متاح حالياً، حاول لاحقاً');
+  }
+};
 
 const checkHandle: Handler = async ({ env, url }) => {
   const handle = normalizeHandle(url.searchParams.get('h'));
@@ -1448,6 +1461,7 @@ const routes: Route[] = [
   { method: 'DELETE', pattern: /^\/api\/blocks\/([\w-]+)$/, handler: unblockUser },
   { method: 'PATCH', pattern: /^\/api\/me$/, handler: patchMe },
   { method: 'DELETE', pattern: /^\/api\/me$/, handler: deleteMe },
+  { method: 'POST', pattern: /^\/api\/assistant$/, handler: assistantChat },
   { method: 'GET', pattern: /^\/api\/statuses$/, handler: listStatuses },
   { method: 'POST', pattern: /^\/api\/statuses$/, handler: createStatus },
   { method: 'POST', pattern: /^\/api\/statuses\/([\w-]+)\/view$/, handler: viewStatus },
