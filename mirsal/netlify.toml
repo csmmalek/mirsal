@@ -1,4 +1,8 @@
 [build]
+  # معرّف Google عام ومعلن في wrangler.jsonc، فلا يُعد سراً
+  [build.environment]
+    SECRETS_SCAN_OMIT_KEYS = "GOOGLE_CLIENT_ID"
+
   command = "npm install --legacy-peer-deps && npm run build"
   publish = "dist"
   functions = "netlify/functions"
