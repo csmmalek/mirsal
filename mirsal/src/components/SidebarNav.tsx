@@ -83,7 +83,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
       {!mobileHidden && (
         <nav
           aria-label="التنقل الرئيسي"
-          className="mobile-nav md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[var(--glass-bg-strong)] backdrop-blur-xl border-t border-[var(--glass-border)] grid grid-cols-3 items-center px-2"
+          className="mobile-nav md:hidden fixed bottom-16 left-0 right-0 z-30 bg-[var(--glass-bg-strong)] backdrop-blur-xl border-t border-[var(--glass-border)] grid grid-cols-3 items-center px-2"
         >
           {items.map((it) => (
             <button
